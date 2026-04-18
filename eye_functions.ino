@@ -74,8 +74,9 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
           p = pgm_read_word(sclera + scleraY * SCLERA_WIDTH + scleraX);
         }
       }
-      // Byte-swap to big-endian for the display bus.
-      *(&pbuffer[dmaBuf][0] + pixels++) = p >> 8 | p << 8;
+      // Arduino_GFX's writePixels() takes host-order RGB565 and swaps
+      // to bus byte order internally -- do NOT pre-swap here.
+      *(&pbuffer[dmaBuf][0] + pixels++) = p;
 
       if (pixels >= BUFFER_SIZE) {
         yield();
