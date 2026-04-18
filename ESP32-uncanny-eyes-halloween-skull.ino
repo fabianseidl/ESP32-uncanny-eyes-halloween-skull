@@ -12,6 +12,13 @@
 uint16_t pbuffer[BUFFERS][BUFFER_SIZE];
 bool dmaBuf = 0;
 
+// Row-expand line buffers (see docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md).
+// line_src holds one source row filled by drawEyeRow().
+// line_dst holds the horizontally-expanded row pushed through emitRow().
+// Sized at compile time from the asset header + config.h.
+uint16_t line_src[SCREEN_WIDTH];
+uint16_t line_dst[SCREEN_WIDTH];   // v2a Task 2 widens this to RENDER_WIDTH.
+
 // Blink state machine shared with eye_functions.ino.
 #define NOBLINK 0
 #define ENBLINK 1
