@@ -1,6 +1,9 @@
 # v2a — Scale renderer to full 466×466 (NN, size-agnostic)
 
-**Status:** draft, pending user review
+> **Superseded** by [`2026-04-18-v2a-row-expand-design.md`](2026-04-18-v2a-row-expand-design.md).
+> This document describes an earlier v2a variant in which NN upscale is performed inside `drawEye()`'s scanline via Bresenham-driven source-index advance. It is kept for history only and is NOT the implementation target. The superseding spec moves upscale to a dedicated row-expander at the pixel-push stage, running per-pixel iris / sclera / lid decisions at source resolution.
+
+**Status:** draft, pending user review — SUPERSEDED
 **Date:** 2026-04-18
 **Scope:** v2a only — full-panel render on one board. Two-board sync, native-466 assets, touch/IMU/audio, and battery remain future work.
 
