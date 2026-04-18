@@ -106,9 +106,14 @@ Create `display_async.cpp`:
 // changes upstream, re-verify those values before upgrading.
 
 #include "display_async.h"
+
+// Arduino.h must come BEFORE config.h: config.h transitively pulls
+// data/default_large.h, which uses the PROGMEM macro defined by Arduino.h.
+#include <Arduino.h>
+#include <string.h>
+
 #include "config.h"
 
-#include <Arduino.h>
 #include <driver/spi_master.h>
 #include <esp_heap_caps.h>
 #include <esp_err.h>
