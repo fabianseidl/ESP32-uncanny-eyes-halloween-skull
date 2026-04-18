@@ -47,19 +47,25 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
     uint32_t uT,       // Upper eyelid threshold value
     uint32_t lT) {     // Lower eyelid threshold value
   display_startWrite();
-  display_setAddrWindow(EYE_RENDER_X, EYE_RENDER_Y,
-                        EYE_RENDER_WIDTH, EYE_RENDER_HEIGHT);
+  display_setAddrWindow(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
 
   const uint32_t scleraXsave = scleraX;
   int32_t        irisY       = (int32_t)scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
 
-  // Task 1: identity expander + always-once vertical emit. Task 2 wires in
-  // horizontal Bresenham + vertical replication for full-panel render.
+  // Vertical NN replication via Bresenham: for every source row emitted
+  // once, we emit extra copies based on the accumulated RENDER_HEIGHT -
+  // SCREEN_HEIGHT error. Total emits per frame = RENDER_HEIGHT exactly.
+  int32_t vAccum = 0;
   for (uint32_t sy = 0; sy < SCREEN_HEIGHT; sy++) {
     drawEyeRow(sy, scleraXsave, scleraY + sy, irisY + (int32_t)sy,
                iScale, uT, lT);
     expandRow(line_src, line_dst);
-    emitRow(line_dst);
+    emitRow(line_dst);                     // always at least once
+    vAccum += (int32_t)RENDER_HEIGHT - (int32_t)SCREEN_HEIGHT;
+    while (vAccum >= (int32_t)SCREEN_HEIGHT) {
+      vAccum -= SCREEN_HEIGHT;
+      emitRow(line_dst);                   // extra emit (no recompute)
+    }
   }
 
   emitRowFlushTail();
@@ -106,12 +112,19 @@ static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
   }
 }
 
-// Horizontal NN stretch line_src[SCREEN_WIDTH] -> line_dst[RENDER_WIDTH]
-// via integer Bresenham. Task 1: sizes match, so this collapses to a
-// straight copy. Task 2 rewrites this to the Bresenham form in the spec.
+// Horizontal NN stretch src[SCREEN_WIDTH] -> dst[RENDER_WIDTH] via
+// integer Bresenham. Collapses to a pixel-for-pixel copy when
+// SCREEN_WIDTH == RENDER_WIDTH.
 static void expandRow(const uint16_t* src, uint16_t* dst) {
-  for (uint16_t i = 0; i < SCREEN_WIDTH; i++) {
-    dst[i] = src[i];
+  uint16_t sx     = 0;
+  int32_t  hAccum = 0;
+  for (uint16_t rx = 0; rx < RENDER_WIDTH; rx++) {
+    dst[rx] = src[sx];
+    hAccum += SCREEN_WIDTH;
+    while (hAccum >= (int32_t)RENDER_WIDTH) {
+      hAccum -= RENDER_WIDTH;
+      sx++;
+    }
   }
 }
 
@@ -120,8 +133,7 @@ static void expandRow(const uint16_t* src, uint16_t* dst) {
 // in display_startWrite() / display_endWrite(), and must invoke a final
 // flush via emitRowFlushTail() before endWrite.
 static void emitRow(const uint16_t* dst) {
-  const uint32_t width = SCREEN_WIDTH;   // Task 2: RENDER_WIDTH
-  for (uint32_t i = 0; i < width; i++) {
+  for (uint32_t i = 0; i < RENDER_WIDTH; i++) {
     pbuffer[dmaBuf][s_emitPixels++] = dst[i];
     if (s_emitPixels >= BUFFER_SIZE) {
       yield();
