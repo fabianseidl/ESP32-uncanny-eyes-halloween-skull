@@ -92,7 +92,11 @@ void display_async_init(void) {
 }
 
 void display_pixelsBegin(void) {
-  // Task 3 adds spi_device_acquire_bus(s_handle, portMAX_DELAY) here.
+  esp_err_t rc = spi_device_acquire_bus(s_handle, portMAX_DELAY);
+  if (rc != ESP_OK) {
+    Serial.print("qspi_async: acquire_bus rc=");
+    Serial.println(rc);
+  }
   cs_low();
   s_buf_idx     = 0;
   s_first_chunk = true;
@@ -156,5 +160,5 @@ void display_pixelsEnd(void) {
     }
   }
   cs_high();
-  // Task 3 adds spi_device_release_bus(s_handle) here.
+  spi_device_release_bus(s_handle);
 }

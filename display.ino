@@ -35,7 +35,8 @@ void display_begin() {
 
   s_bus = new Arduino_ESP32QSPI(
       PIN_QSPI_CS, PIN_QSPI_SCLK,
-      PIN_QSPI_D0, PIN_QSPI_D1, PIN_QSPI_D2, PIN_QSPI_D3);
+      PIN_QSPI_D0, PIN_QSPI_D1, PIN_QSPI_D2, PIN_QSPI_D3,
+      /*is_shared_interface=*/true);
 
   s_gfx = new Arduino_CO5300(
       s_bus, PIN_LCD_RESET, 0 /* rotation */,
