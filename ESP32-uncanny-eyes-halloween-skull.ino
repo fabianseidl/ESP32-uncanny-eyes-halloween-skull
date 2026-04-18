@@ -1,7 +1,8 @@
-// Uncanny Eyes -- Waveshare ESP32-S3-Touch-AMOLED-1.75 port (v1).
+// Uncanny Eyes -- Waveshare ESP32-S3-Touch-AMOLED-1.75 port (v2a).
 //
-// Renders one eye (EYE_SIDE in config.h) as a 240x240 image centered on
-// the 466x466 CO5300 AMOLED. See docs/superpowers/specs for the design.
+// Renders one eye (EYE_SIDE in config.h) full-panel on the 466x466 CO5300
+// AMOLED, NN-stretched from the 240-baked asset via a row expander. See
+// docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md.
 
 #include "config.h"
 
@@ -11,6 +12,13 @@
 #define BUFFERS 2
 uint16_t pbuffer[BUFFERS][BUFFER_SIZE];
 bool dmaBuf = 0;
+
+// Row-expand line buffers (see docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md).
+// line_src holds one source row filled by drawEyeRow().
+// line_dst holds the horizontally-expanded row pushed through emitRow().
+// Sized at compile time from the asset header + config.h.
+uint16_t line_src[SCREEN_WIDTH];
+uint16_t line_dst[RENDER_WIDTH];
 
 // Blink state machine shared with eye_functions.ino.
 #define NOBLINK 0

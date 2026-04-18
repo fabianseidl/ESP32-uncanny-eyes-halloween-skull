@@ -6,12 +6,12 @@ Inspired by [Adafruit's Uncanny Eyes](https://github.com/adafruit/Uncanny_Eyes/)
 
 This repository previously targeted two 1.28" GC9A01 TFTs driven by an ESP32-WROOM-32D plus a servo-driven skull jaw. That hardware path has been removed. See the git history up to commit [`4dedaa3`](https://github.com/) if you need the old code.
 
-## v1 scope
+## v2a scope
 
-- Renders **one eye** (left or right, selected at compile time) as a 240×240 image centered on the 466×466 panel. No scaling, no upscaling to fill the panel yet.
+- Renders **one eye** (left or right, selected at compile time) full-panel 466×466 on the AMOLED, NN-stretched from the 240-baked asset via a row expander. Per-pixel iris / sclera / eyelid logic still runs at source resolution (57.6K ops/frame); horizontal + vertical nearest-neighbour duplication happens at render resolution.
 - Autonomous eye motion, autoblink, eyelid tracking, autonomous iris scaling — all preserved from the original.
 - No touch, no IMU, no RTC, no PMU control, no audio. Those peripherals exist on the board but are not used yet.
-- Measured **~32 FPS** on the Waveshare 1.75 at 40 MHz QSPI (native 240×240 per-pixel recomputation, no DMA queueing in the wrapper yet).
+- v1 baseline (native 240×240, centered, no DMA queueing) measured **~32 FPS** on the Waveshare 1.75 at 40 MHz QSPI. v2a FPS is recorded per-build after hardware verification — see the design spec for the current measurement.
 
 ## Hardware
 
@@ -62,7 +62,7 @@ FPS=32
 ...
 ```
 
-The eye should appear centered on the AMOLED with a wide dark ring around it.
+The eye fills the full 466×466 AMOLED (the panel's own round mask trims the corners).
 
 > **Tip:** the Waveshare's USB serial port enumerates under different `/dev/cu.usbmodemXXXX` names across reboots; re-query `arduino-cli board list` if upload fails with "port busy or doesn't exist."
 
@@ -93,9 +93,9 @@ docs/superpowers/plans/                  v1 implementation plan
 
 Only `display.ino` knows about `Arduino_GFX`; the renderer talks to it through a tiny C function API (`display_begin`, `display_setAddrWindow`, `display_writePixels`, …). Swapping to a different display library or board should only touch `display.ino` + `config.h`.
 
-## Known limitations / ideas for v2
+## Known limitations / ideas for later
 
 - **One eye only.** Two boards would need sync (e.g. ESP-NOW exchanging a shared RNG seed) so both eyes look at the same thing.
-- **No scaling.** The 240×240 eye doesn't fill the 466×466 panel. Real-time 2× integer upscale with the extra ~80 ms of per-frame time would be plausible, or a one-shot pre-scale of the PROGMEM assets.
+- **Nearest-neighbour upscale.** v2a fills the panel via integer-Bresenham NN duplication from the 240-baked asset; the scale factor (~1.94×) means obvious row/column repeats. A bilinear expander or a native-466 asset would look sharper. See `docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md` "Future Work".
 - **No DMA in the wrapper.** `display.writePixels()` is synchronous. Queued / double-buffered DMA through `Arduino_ESP32QSPI`'s async API would likely push FPS past 50.
 - **TCA9554 expander, AXP2101 PMU, CST9217 touch, QMI8658 IMU, PCF85063 RTC** — all present on the board, all unused. See `docs/hardware-notes.md` for pins / I²C addresses when you want to light them up.

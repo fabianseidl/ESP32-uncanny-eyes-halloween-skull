@@ -11,6 +11,21 @@
 // major reaction of the eye plus the continuous smaller adjustments.
 uint16_t oldIris = (IRIS_MIN + IRIS_MAX) / 2, newIris;
 
+// Row-expand line buffers (defined in ESP32-uncanny-eyes-halloween-skull.ino).
+extern uint16_t line_src[];
+extern uint16_t line_dst[];
+
+static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
+                       int32_t irisY, uint32_t iScale,
+                       uint32_t uT, uint32_t lT);
+static void expandRow(const uint16_t* src, uint16_t* dst);
+static void emitRow(const uint16_t* dst);
+static void emitRowFlushTail();
+
+// Shared with emitRowFlushTail; promoted to file scope so the frame-end
+// tail flush can drain the partial DMA buffer.
+static uint32_t s_emitPixels = 0;
+
 // Initialise eye ----------------------------------------------------------
 void initEyes(void) {
   Serial.println("initEyes: single eye v1");
@@ -31,66 +46,123 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
     uint32_t scleraY,  // First pixel Y offset into sclera image
     uint32_t uT,       // Upper eyelid threshold value
     uint32_t lT) {     // Lower eyelid threshold value
-  uint32_t screenX, screenY, scleraXsave;
-  int32_t  irisX, irisY;
-  uint32_t p, a, d;
-  uint32_t pixels = 0;
-
   display_startWrite();
-  display_setAddrWindow(EYE_RENDER_X, EYE_RENDER_Y,
-                        EYE_RENDER_WIDTH, EYE_RENDER_HEIGHT);
+  display_setAddrWindow(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
 
+  const uint32_t scleraXsave = scleraX;
+  int32_t        irisY       = (int32_t)scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
+
+  // Vertical NN replication via Bresenham: for every source row emitted
+  // once, we emit extra copies based on the accumulated RENDER_HEIGHT -
+  // SCREEN_HEIGHT error. Total emits per frame = RENDER_HEIGHT exactly.
+  int32_t vAccum = 0;
+  for (uint32_t sy = 0; sy < SCREEN_HEIGHT; sy++) {
+    drawEyeRow(sy, scleraXsave, scleraY + sy, irisY + (int32_t)sy,
+               iScale, uT, lT);
+    expandRow(line_src, line_dst);
+    emitRow(line_dst);                     // always at least once
+    vAccum += (int32_t)RENDER_HEIGHT - (int32_t)SCREEN_HEIGHT;
+    while (vAccum >= (int32_t)SCREEN_HEIGHT) {
+      vAccum -= SCREEN_HEIGHT;
+      emitRow(line_dst);                   // extra emit (no recompute)
+    }
+  }
+
+  emitRowFlushTail();
+  display_endWrite();
+}
+
+// v1's inner scanline, verbatim, with the pixel-write target changed from
+// the DMA ping-pong buffer to line_src[sx]. Pure source-space: references
+// only asset-header macros and the gaze-pan state passed in.
+//
+// Perf: per-row base pointers (`lower_row`, `upper_row`, `sclera_row`,
+// `polar_row`) are cached once per call so the inner loop drops a
+// multiply + add per pixel for each asset read. Row-in-range guard for
+// `polar_row` keeps the iris-only base pointer from wrapping when the
+// gaze has panned so far that the iris is fully outside this row.
+static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
+                       int32_t irisY, uint32_t iScale,
+                       uint32_t uT, uint32_t lT) {
   // Eyelid map direction depends on which side this board renders.
   // LEFT eye walks the eyelid map right-to-left (caruncle on the
   // nose-side); RIGHT eye walks it left-to-right.
   const uint16_t lidX_start = (EYE_SIDE == EYE_SIDE_LEFT) ? (SCREEN_WIDTH - 1) : 0;
   const int16_t  lidX_step  = (EYE_SIDE == EYE_SIDE_LEFT) ? -1 : 1;
 
-  scleraXsave = scleraX;
-  irisY       = scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
+  uint32_t scleraX = scleraXsave;
+  int32_t  irisX   = (int32_t)scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
+  uint16_t lidX    = lidX_start;
 
-  for (screenY = 0; screenY < SCREEN_HEIGHT; screenY++, scleraY++, irisY++) {
-    scleraX = scleraXsave;
-    irisX   = scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
-    uint16_t lidX = lidX_start;
-    for (screenX = 0; screenX < SCREEN_WIDTH;
-         screenX++, scleraX++, irisX++, lidX += lidX_step) {
-      if ((pgm_read_byte(lower + screenY * SCREEN_WIDTH + lidX) <= lT) ||
-          (pgm_read_byte(upper + screenY * SCREEN_WIDTH + lidX) <= uT)) {
-        // Covered by eyelid
-        p = 0;
-      } else if ((irisY < 0) || (irisY >= IRIS_HEIGHT) ||
-                 (irisX < 0) || (irisX >= IRIS_WIDTH)) {
-        // In sclera
-        p = pgm_read_word(sclera + scleraY * SCLERA_WIDTH + scleraX);
+  const uint8_t*  const lower_row  = lower  + sy       * SCREEN_WIDTH;
+  const uint8_t*  const upper_row  = upper  + sy       * SCREEN_WIDTH;
+  const uint16_t* const sclera_row = sclera + scleraY  * SCLERA_WIDTH;
+  const bool             irisYok   = (irisY >= 0) && (irisY < IRIS_HEIGHT);
+  const uint16_t* const polar_row  = irisYok
+                                   ? (polar + irisY * IRIS_WIDTH)
+                                   : nullptr;
+
+  for (uint32_t sx = 0; sx < SCREEN_WIDTH;
+       sx++, scleraX++, irisX++, lidX += lidX_step) {
+    uint32_t p, a, d;
+    if ((pgm_read_byte(lower_row + lidX) <= lT) ||
+        (pgm_read_byte(upper_row + lidX) <= uT)) {
+      p = 0;
+    } else if (!irisYok || (irisX < 0) || (irisX >= IRIS_WIDTH)) {
+      p = pgm_read_word(sclera_row + scleraX);
+    } else {
+      p = pgm_read_word(polar_row + irisX);
+      d = (iScale * (p & 0x7F)) / 128;
+      if (d < IRIS_MAP_HEIGHT) {
+        a = (IRIS_MAP_WIDTH * (p >> 7)) / 512;
+        p = pgm_read_word(iris + d * IRIS_MAP_WIDTH + a);
       } else {
-        // Maybe iris...
-        p = pgm_read_word(polar + irisY * IRIS_WIDTH + irisX);
-        d = (iScale * (p & 0x7F)) / 128;
-        if (d < IRIS_MAP_HEIGHT) {
-          a = (IRIS_MAP_WIDTH * (p >> 7)) / 512;
-          p = pgm_read_word(iris + d * IRIS_MAP_WIDTH + a);
-        } else {
-          p = pgm_read_word(sclera + scleraY * SCLERA_WIDTH + scleraX);
-        }
-      }
-      // Arduino_GFX's writePixels() takes host-order RGB565 and swaps
-      // to bus byte order internally -- do NOT pre-swap here.
-      *(&pbuffer[dmaBuf][0] + pixels++) = p;
-
-      if (pixels >= BUFFER_SIZE) {
-        yield();
-        display_writePixels(&pbuffer[dmaBuf][0], pixels);
-        dmaBuf = !dmaBuf;
-        pixels = 0;
+        p = pgm_read_word(sclera_row + scleraX);
       }
     }
+    line_src[sx] = (uint16_t)p;
   }
+}
 
-  if (pixels) {
-    display_writePixels(&pbuffer[dmaBuf][0], pixels);
+// Horizontal NN stretch src[SCREEN_WIDTH] -> dst[RENDER_WIDTH] via
+// integer Bresenham. Collapses to a pixel-for-pixel copy when
+// SCREEN_WIDTH == RENDER_WIDTH.
+static void expandRow(const uint16_t* src, uint16_t* dst) {
+  uint16_t sx     = 0;
+  int32_t  hAccum = 0;
+  for (uint16_t rx = 0; rx < RENDER_WIDTH; rx++) {
+    dst[rx] = src[sx];
+    hAccum += SCREEN_WIDTH;
+    while (hAccum >= (int32_t)RENDER_WIDTH) {
+      hAccum -= RENDER_WIDTH;
+      sx++;
+    }
   }
-  display_endWrite();
+}
+
+// Push one expanded row through the DMA ping-pong. Flushes whenever the
+// active buffer fills. Callers must wrap their sequence of emitRow() calls
+// in display_startWrite() / display_endWrite(), and must invoke a final
+// flush via emitRowFlushTail() before endWrite.
+static void emitRow(const uint16_t* dst) {
+  for (uint32_t i = 0; i < RENDER_WIDTH; i++) {
+    pbuffer[dmaBuf][s_emitPixels++] = dst[i];
+    if (s_emitPixels >= BUFFER_SIZE) {
+      yield();
+      display_writePixels(&pbuffer[dmaBuf][0], s_emitPixels);
+      dmaBuf = !dmaBuf;
+      s_emitPixels = 0;
+    }
+  }
+}
+
+// Flush the partial DMA buffer at end of frame. Must be called between the
+// last emitRow() and display_endWrite().
+static void emitRowFlushTail() {
+  if (s_emitPixels) {
+    display_writePixels(&pbuffer[dmaBuf][0], s_emitPixels);
+    s_emitPixels = 0;
+  }
 }
 
 // EYE ANIMATION -----------------------------------------------------------
