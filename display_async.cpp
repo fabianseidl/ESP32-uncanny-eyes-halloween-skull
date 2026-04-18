@@ -35,8 +35,8 @@
 #define QSPI_ASYNC_CLOCK_HZ 40000000
 #define QSPI_ASYNC_HOST     SPI2_HOST
 
-// Task 1 stub fallback. Task 2 moves the real define into config.h;
-// when that happens this #ifndef becomes a no-op.
+// Task 2 moved the real define into config.h; this #ifndef is now an
+// inert guard kept as self-documentation of the assumption.
 #ifndef QSPI_ASYNC_CHUNK_PX
 #define QSPI_ASYNC_CHUNK_PX 1024
 #endif
@@ -92,15 +92,69 @@ void display_async_init(void) {
 }
 
 void display_pixelsBegin(void) {
-  // Task 3 replaces the body of this function with the real acquire/CS logic.
-  // Keeping it a noop in Task 1 means nothing calls through yet.
+  // Task 3 adds spi_device_acquire_bus(s_handle, portMAX_DELAY) here.
+  cs_low();
+  s_buf_idx     = 0;
+  s_first_chunk = true;
+  // s_inflight[] is already {false,false} from the last display_pixelsEnd.
 }
 
 void display_pixelsQueueChunk(const uint16_t *px, uint32_t len) {
-  (void)px; (void)len;
-  // Task 2 fills this in.
+  const uint8_t slot = s_buf_idx;
+
+  // Wait on the previous transfer into this slot before reusing its buffer.
+  if (s_inflight[slot]) {
+    spi_transaction_t *done = nullptr;
+    esp_err_t rc = spi_device_get_trans_result(s_handle, &done, portMAX_DELAY);
+    (void)rc; (void)done;   // portMAX_DELAY + our own driver => effectively cannot fail.
+    s_inflight[slot] = false;
+  }
+
+  // CPU byte-swap host->BE RGB565 into the DMA-capable slot buffer.
+  uint16_t *dst = s_dma_buf[slot];
+  for (uint32_t i = 0; i < len; i++) {
+    const uint16_t p = px[i];
+    dst[i] = (uint16_t)((p << 8) | (p >> 8));
+  }
+
+  // Transcribed from Arduino_ESP32QSPI.cpp writePixels() at lines 333-344
+  // of the installed library. Keep in sync with the library if upgraded.
+  memset(&s_trans[slot], 0, sizeof(s_trans[slot]));
+  if (s_first_chunk) {
+    s_trans[slot].base.flags = SPI_TRANS_MODE_QIO;
+    s_trans[slot].base.cmd   = 0x32;
+    s_trans[slot].base.addr  = 0x003C00;
+  } else {
+    s_trans[slot].base.flags = SPI_TRANS_MODE_QIO |
+                               SPI_TRANS_VARIABLE_CMD |
+                               SPI_TRANS_VARIABLE_ADDR |
+                               SPI_TRANS_VARIABLE_DUMMY;
+    s_trans[slot].command_bits = 0;
+    s_trans[slot].address_bits = 0;
+    s_trans[slot].dummy_bits   = 0;
+  }
+  s_trans[slot].base.tx_buffer = dst;
+  s_trans[slot].base.length    = len * 16;  // bits.
+
+  esp_err_t rc = spi_device_queue_trans(s_handle, &s_trans[slot].base, portMAX_DELAY);
+  if (rc != ESP_OK) {
+    Serial.print("qspi_async: queue_trans rc=");
+    Serial.println(rc);
+  }
+
+  s_inflight[slot] = true;
+  s_first_chunk    = false;
+  s_buf_idx       ^= 1;
 }
 
 void display_pixelsEnd(void) {
-  // Task 3 fills this in.
+  for (int slot = 0; slot < 2; slot++) {
+    if (s_inflight[slot]) {
+      spi_transaction_t *done = nullptr;
+      (void)spi_device_get_trans_result(s_handle, &done, portMAX_DELAY);
+      s_inflight[slot] = false;
+    }
+  }
+  cs_high();
+  // Task 3 adds spi_device_release_bus(s_handle) here.
 }

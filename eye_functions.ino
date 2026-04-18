@@ -15,6 +15,15 @@ uint16_t oldIris = (IRIS_MIN + IRIS_MAX) / 2, newIris;
 extern uint16_t line_src[];
 extern uint16_t line_dst[];
 
+#include "display_async.h"
+
+// Renderer-side accumulator. Each emitted row is appended; when it reaches
+// QSPI_ASYNC_CHUNK_PX we hand the slice off to display_pixelsQueueChunk.
+// Replaces v2a's pbuffer[2][BUFFER_SIZE] ping-pong (the async module owns
+// its own DMA ping-pong internally).
+static uint16_t s_chunk_buf[QSPI_ASYNC_CHUNK_PX];
+static uint32_t s_chunk_fill = 0;
+
 static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
                        int32_t irisY, uint32_t iScale,
                        uint32_t uT, uint32_t lT);
@@ -48,6 +57,9 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
     uint32_t lT) {     // Lower eyelid threshold value
   display_startWrite();
   display_setAddrWindow(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
+  display_endWrite();
+
+  display_pixelsBegin();
 
   const uint32_t scleraXsave = scleraX;
   int32_t        irisY       = (int32_t)scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
@@ -69,7 +81,7 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
   }
 
   emitRowFlushTail();
-  display_endWrite();
+  display_pixelsEnd();
 }
 
 // v1's inner scanline, verbatim, with the pixel-write target changed from
@@ -146,22 +158,20 @@ static void expandRow(const uint16_t* src, uint16_t* dst) {
 // flush via emitRowFlushTail() before endWrite.
 static void emitRow(const uint16_t* dst) {
   for (uint32_t i = 0; i < RENDER_WIDTH; i++) {
-    pbuffer[dmaBuf][s_emitPixels++] = dst[i];
-    if (s_emitPixels >= BUFFER_SIZE) {
-      yield();
-      display_writePixels(&pbuffer[dmaBuf][0], s_emitPixels);
-      dmaBuf = !dmaBuf;
-      s_emitPixels = 0;
+    s_chunk_buf[s_chunk_fill++] = dst[i];
+    if (s_chunk_fill == QSPI_ASYNC_CHUNK_PX) {
+      display_pixelsQueueChunk(s_chunk_buf, s_chunk_fill);
+      s_chunk_fill = 0;
     }
   }
 }
 
-// Flush the partial DMA buffer at end of frame. Must be called between the
-// last emitRow() and display_endWrite().
+// Flush the partial chunk accumulator at end of frame. Must be called between
+// the last emitRow() and display_pixelsEnd().
 static void emitRowFlushTail() {
-  if (s_emitPixels) {
-    display_writePixels(&pbuffer[dmaBuf][0], s_emitPixels);
-    s_emitPixels = 0;
+  if (s_chunk_fill) {
+    display_pixelsQueueChunk(s_chunk_buf, s_chunk_fill);
+    s_chunk_fill = 0;
   }
 }
 

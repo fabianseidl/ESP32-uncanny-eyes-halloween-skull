@@ -4,6 +4,11 @@
 
 #pragma once
 
+// Chunk size for async QSPI pixel pushes. Must equal ESP32QSPI_MAX_PIXELS_AT_ONCE
+// (1024 default) since our transaction format (cmd=0x32 addr=0x003C00 on first
+// chunk, continuation otherwise) assumes the library's per-chunk framing.
+#define QSPI_ASYNC_CHUNK_PX 1024
+
 #include "data/default_large.h"
 
 #define EYE_SIDE_LEFT  0
