@@ -213,13 +213,13 @@ Run from repo root:
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=cdc \
+  --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default \
   .
 ```
 
 Expected: `Sketch uses` line, zero errors, zero new warnings beyond v2a baseline.
 
-If the FQBN differs from your normal invocation, use whichever FQBN produced the v2a `FPS=10` baseline. Check shell history / `tools/` for the canonical flash command.
+This is the canonical FQBN from `README.md`. Pre-existing `-Wmissing-field-initializers` warnings inside `GFX_Library_for_Arduino` are the v2a baseline; do not attempt to silence them.
 
 - [ ] **Step 1.5: Flash and confirm the new serial line.**
 
@@ -450,7 +450,7 @@ Note: the `display_startWrite` / `display_setAddrWindow` / `display_endWrite` tr
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=cdc \
+  --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default \
   .
 ```
 
@@ -543,7 +543,7 @@ CS must go **high** only after both slots drain. Any transaction still transferr
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=cdc \
+  --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default \
   .
 ```
 
@@ -661,7 +661,7 @@ static uint32_t s_emitPixels = 0;
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=cdc \
+  --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default \
   .
 ```
 
@@ -725,7 +725,7 @@ Edit `config.h`, change `#define EYE_SIDE EYE_SIDE_LEFT` to `EYE_SIDE_RIGHT`, re
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=cdc \
+  --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default \
   .
 ```
 
@@ -775,7 +775,7 @@ Don't rewrite the README top-to-bottom. Preserve unrelated prose. Keep the "not 
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=cdc \
+  --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default \
   .
 ```
 
