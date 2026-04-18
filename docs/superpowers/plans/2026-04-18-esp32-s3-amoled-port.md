@@ -57,7 +57,7 @@ All tasks that compile or flash assume the following Arduino IDE **Tools** menu 
 | Upload Speed            | 921600                                          |
 
 Equivalent `arduino-cli` FQBN (optional, for scripted builds):
-`esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio80,FlashSize=16M,PSRAM=opi,PartitionScheme=default`
+`esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default`
 
 ---
 
