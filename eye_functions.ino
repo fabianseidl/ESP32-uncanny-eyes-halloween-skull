@@ -75,6 +75,12 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
 // v1's inner scanline, verbatim, with the pixel-write target changed from
 // the DMA ping-pong buffer to line_src[sx]. Pure source-space: references
 // only asset-header macros and the gaze-pan state passed in.
+//
+// Perf: per-row base pointers (`lower_row`, `upper_row`, `sclera_row`,
+// `polar_row`) are cached once per call so the inner loop drops a
+// multiply + add per pixel for each asset read. Row-in-range guard for
+// `polar_row` keeps the iris-only base pointer from wrapping when the
+// gaze has panned so far that the iris is fully outside this row.
 static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
                        int32_t irisY, uint32_t iScale,
                        uint32_t uT, uint32_t lT) {
@@ -87,25 +93,31 @@ static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
   uint32_t scleraX = scleraXsave;
   int32_t  irisX   = (int32_t)scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
   uint16_t lidX    = lidX_start;
-  uint32_t screenY = sy;
+
+  const uint8_t*  const lower_row  = lower  + sy       * SCREEN_WIDTH;
+  const uint8_t*  const upper_row  = upper  + sy       * SCREEN_WIDTH;
+  const uint16_t* const sclera_row = sclera + scleraY  * SCLERA_WIDTH;
+  const bool             irisYok   = (irisY >= 0) && (irisY < IRIS_HEIGHT);
+  const uint16_t* const polar_row  = irisYok
+                                   ? (polar + irisY * IRIS_WIDTH)
+                                   : nullptr;
 
   for (uint32_t sx = 0; sx < SCREEN_WIDTH;
        sx++, scleraX++, irisX++, lidX += lidX_step) {
     uint32_t p, a, d;
-    if ((pgm_read_byte(lower + screenY * SCREEN_WIDTH + lidX) <= lT) ||
-        (pgm_read_byte(upper + screenY * SCREEN_WIDTH + lidX) <= uT)) {
+    if ((pgm_read_byte(lower_row + lidX) <= lT) ||
+        (pgm_read_byte(upper_row + lidX) <= uT)) {
       p = 0;
-    } else if ((irisY < 0) || (irisY >= IRIS_HEIGHT) ||
-               (irisX < 0) || (irisX >= IRIS_WIDTH)) {
-      p = pgm_read_word(sclera + scleraY * SCLERA_WIDTH + scleraX);
+    } else if (!irisYok || (irisX < 0) || (irisX >= IRIS_WIDTH)) {
+      p = pgm_read_word(sclera_row + scleraX);
     } else {
-      p = pgm_read_word(polar + irisY * IRIS_WIDTH + irisX);
+      p = pgm_read_word(polar_row + irisX);
       d = (iScale * (p & 0x7F)) / 128;
       if (d < IRIS_MAP_HEIGHT) {
         a = (IRIS_MAP_WIDTH * (p >> 7)) / 512;
         p = pgm_read_word(iris + d * IRIS_MAP_WIDTH + a);
       } else {
-        p = pgm_read_word(sclera + scleraY * SCLERA_WIDTH + scleraX);
+        p = pgm_read_word(sclera_row + scleraX);
       }
     }
     line_src[sx] = (uint16_t)p;
