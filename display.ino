@@ -7,6 +7,8 @@
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
 
+#include "display_async.h"
+
 // Pin map -- authoritative copy of Waveshare's pin_config.h.
 #define PIN_QSPI_CS    12
 #define PIN_QSPI_SCLK  38
@@ -45,6 +47,8 @@ void display_begin() {
     Serial.println("display_begin: gfx->begin() FAILED");
     while (true) { delay(1000); }
   }
+
+  display_async_init();
 }
 
 void display_setBrightness(uint8_t value) {
