@@ -1,8 +1,8 @@
 # v2a — Row-expand renderer: scale at pixel push (NN, size-agnostic)
 
-**Status:** draft, pending user review
+**Status:** approved, ready for implementation
 **Date:** 2026-04-18
-**Supersedes:** [`2026-04-18-v2a-full-panel-render-design.md`](2026-04-18-v2a-full-panel-render-design.md) (Bresenham-in-drawEye variant). Replaces it as the chosen v2a approach.
+**Supersedes:** an earlier v2a variant (Bresenham-in-drawEye) retained only in git history (see commit `78415cd` for the original design and `1a6dd13` for the supersession).
 **Scope:** v2a only — full-panel render on one board. Two-board sync, native-466 assets, touch/IMU/audio, and battery remain future work.
 
 ## Summary
@@ -11,7 +11,7 @@ Upgrade the renderer so the eye fills the entire 466×466 CO5300 AMOLED panel, u
 
 `drawEye()` is pure source-space. The expander is the only code that knows render-space exists. When `SCREEN_* == RENDER_*`, the expander collapses to `memcpy` + always-once emit — the renderer runs v1's pixel stream bit-for-bit.
 
-v1's centered-240 render is removed. This spec replaces the superseded `v2a-full-panel-render-design.md` Bresenham-in-drawEye variant as v2a's chosen implementation.
+v1's centered-240 render is removed. This spec replaces an earlier v2a variant (Bresenham-in-drawEye) that now lives only in git history.
 
 ## Goals
 
@@ -114,7 +114,7 @@ Set once at the start of `drawEye()`, before the source-row loop.
 
 DMA ping-pong unchanged from v1: `BUFFER_SIZE = 1024`, two buffers, `dmaBuf` flip on each full flush. `emitRow(line_dst)` pushes `RENDER_WIDTH` pixels into the active DMA buffer, flushing whenever it fills — same discipline v1 used for per-pixel writes, just fed from a `memcpy`-style line copy instead of one pixel at a time.
 
-v2a pushes ~217 K pixels per frame in ~212 chunks + one tail flush. Exactly the same DMA shape as the superseded spec.
+v2a pushes ~217 K pixels per frame in ~212 chunks + one tail flush. Exactly the same DMA shape as v1 and as the Bresenham-in-drawEye variant would have produced.
 
 ### Memory layout
 
@@ -189,9 +189,7 @@ None of these functions learn that `RENDER_*` exists.
 | `display.ino` | No change. |
 | `data/default_large.h` | No change. |
 | `README.md` | Targeted edits: replace "240×240 centered on 466" wording with "full-panel 466×466 NN-stretched via row expander from the 240-baked asset." |
-| `docs/superpowers/specs/2026-04-18-v2a-full-panel-render-design.md` | Add "Superseded by `2026-04-18-v2a-row-expand-design.md`" header at the top. Keep content intact for history. |
 | `docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md` | New — this document. |
-| `docs/superpowers/plans/2026-04-18-v2a-full-panel-render.md` | Rewrite to target this design (separate task via `writing-plans` after this spec is approved). |
 
 ## Key decisions
 
@@ -200,19 +198,19 @@ None of these functions learn that `RENDER_*` exists.
 3. **Bresenham in the expander, not in `drawEyeRow()`.** Keeps `drawEyeRow()` readable as pure v1 source-space logic with the write target redirected. Keeps the expander readable as pure render-space scaling.
 4. **Source-row buffer (approach A), not expanded-only (approach B) or double-buffered (C).** A preserves the clean source/render boundary at minimal RAM cost (480 B). B saves that RAM but puts horizontal Bresenham inside `drawEyeRow()`'s inner loop, breaking the boundary. C adds complexity only usable with DMA-overlapped or dual-core compute — v2a-perf territory.
 5. **Nearest-neighbor, not bilinear.** Preserves the "one lookup per channel" inner-loop shape, avoids semantically-broken interpolation of the packed `{angle, distance}` polar iris map, lowest FPS risk. Bilinear remains possible as a future opt-in.
-6. **Replace, not toggle.** Consistent with v1's stated "delete rather than `#ifdef`" philosophy. Fallback to v1 or the superseded Bresenham-in-drawEye variant is a `git checkout` / spec-revert away.
+6. **Replace, not toggle.** Consistent with v1's stated "delete rather than `#ifdef`" philosophy. Fallback to v1 or the Bresenham-in-drawEye alternative is a `git checkout` away.
 7. **Render-space entry points limited to the expander, `emitRow()`, and `display_setAddrWindow()`.** All other files stay in source-space. This is what makes `drawEyeRow()` size-agnostic for future assets (120, 466-native, or anything else) — and the runtime multi-asset future (see Future work) requires changing only `drawEyeRow()`'s loop bounds, not render-space code.
-8. **FPS floor at 10, stretch at 20.** Same numbers as the superseded spec, but the stretch target is now realistic rather than aspirational. Separates "scaling correctness" from "renderer optimization" as independent concerns.
+8. **FPS floor at 10, stretch at 20.** Stretch target is realistic given that expensive per-pixel work runs at source resolution, not render resolution. Separates "scaling correctness" from "renderer optimization" as independent concerns.
 
 ## Known risks / things to verify during v2a bring-up
 
-1. **FPS under the 10 floor.** Lower risk than the superseded spec (~57.6 K expensive ops/frame vs. ~217 K), but still worth verifying. *Verification:* serial `FPS=<n>` line. *Mitigations in order:* (a) confirm `-O2`/`-O3` build flags; (b) inline `expandRow` and `emitRow` if the compiler does not; (c) row-base-pointer caching for `upper` / `lower` / `sclera` inside `drawEyeRow()`; (d) escalate to a dedicated perf follow-up spec.
+1. **FPS under the 10 floor.** Expected to be low-risk (~57.6 K expensive ops/frame on the 240 asset), but still worth verifying. *Verification:* serial `FPS=<n>` line. *Mitigations in order:* (a) confirm `-O2`/`-O3` build flags; (b) inline `expandRow` and `emitRow` if the compiler does not; (c) row-base-pointer caching for `upper` / `lower` / `sclera` inside `drawEyeRow()`; (d) escalate to a dedicated perf follow-up spec.
 2. **Vertical Bresenham off-by-one at the last source row.** Total emitted render rows must equal `RENDER_HEIGHT` exactly — no more, no less, or the address window undershoots / overshoots and DMA behavior is undefined. *Verification:* compile-time `static_assert(SCREEN_HEIGHT <= RENDER_HEIGHT)`; debug-build runtime counter asserting emitted rows == `RENDER_HEIGHT` per frame.
 3. **Horizontal Bresenham off-by-one at the last render pixel.** `sx` must stay in `[0, SCREEN_WIDTH)` for all `rx ∈ [0, RENDER_WIDTH)`. *Verification:* `static_assert(SCREEN_WIDTH <= RENDER_WIDTH)`; debug-build bounds check on `sx`.
 4. **Left-eye mirror.** `lidX` starts at `SCREEN_WIDTH - 1` and decrements, fully inside `drawEyeRow()`. The expander never sees mirror state. *Verification:* flash and visually confirm both `EYE_SIDE = LEFT` and `EYE_SIDE = RIGHT` builds.
 5. **Visible NN stepping.** 240→466 ≈ 1.94× produces alternating "stretch by 2 / stretch by 1" rows and columns. May show mild stepping on iris edge and eyelid curve. *Verification:* visual inspection at intended viewing distance (~arm's length, inside a skull prop). If objectionable, fix is a future spec (native-466 asset or hybrid bilinear), not v2a scope.
 6. **CO5300 col-offset at full width.** `display.ino` sets `CO5300_COL_OFFSET1 = 6`; v1 confirmed this is required to avoid a 6 px garbage strip on the left. `setAddrWindow(0, 0, 466, 466)` relies on Arduino_GFX applying that offset correctly at full width. *Verification:* boot and look — symptom (garbage strip at left) is immediately visible if broken.
-7. **Frame-time variance under blink.** During a blink, most pixels short-circuit to `p = 0` in `drawEyeRow()`, skipping PROGMEM reads — FPS briefly rises. Expander cost is constant regardless of eye state, so the blink FPS spike is smaller than in the superseded design. Not a defect; noted so the FPS log is read correctly.
+7. **Frame-time variance under blink.** During a blink, most pixels short-circuit to `p = 0` in `drawEyeRow()`, skipping PROGMEM reads — FPS briefly rises. Expander cost is constant regardless of eye state, so the blink FPS spike is modest. Not a defect; noted so the FPS log is read correctly.
 
 ## Success criteria (v2a "done")
 
@@ -240,5 +238,5 @@ All of the following on the target board:
 
 - **v2a-followup: 466-native asset.** Regenerate `default_large.h` at source size 466 using the Adafruit art toolchain. Renderer needs no change — the expander collapses to `memcpy` + always-once emit. Win is visual crispness. `drawEyeRow()` does more expensive pixel decisions per frame (466² vs 240²), so FPS may compress; this design moves that from "impossible without rework" to "merely proportional."
 - **v2a-perf: renderer optimization.** If ≥ 20 FPS becomes a goal and the raw design doesn't hit it: row-base-pointer caching inside `drawEyeRow()` to drop per-pixel multiplies, inline `expandRow` / `emitRow` if compiler misses, IRAM-resident hot tables, or DMA-overlapped row-compute (dual-buffer `line_src`).
-- **Runtime-switchable asset tables.** Thread a `const EyeAsset*` through `drawEyeRow()`; its loop bounds and table pointers come from the struct instead of macros. Line buffers sized to `MAX_SCREEN_WIDTH`. The expander needs no change — it already sees only `line_src`, `line_dst`, `SCREEN_*`, `RENDER_*`, and `SCREEN_*` could become a per-frame variable read from the selected asset. This is the main architectural payoff vs. the superseded Bresenham-in-drawEye design: touch points concentrate in one function.
+- **Runtime-switchable asset tables.** Thread a `const EyeAsset*` through `drawEyeRow()`; its loop bounds and table pointers come from the struct instead of macros. Line buffers sized to `MAX_SCREEN_WIDTH`. The expander needs minimal change — it already sees only `line_src`, `line_dst`, `SCREEN_*`, `RENDER_*`, and `SCREEN_*` can become a per-frame variable read from the selected asset. The main architectural payoff of the row-expander design (vs. keeping render-space math inside `drawEyeRow()`) is that runtime-asset touch points concentrate in one function.
 - **v2b+ (unchanged from v1 spec):** second eye on a second board with ESP-NOW sync, touch-to-blink, IMU head-tracking, mic-triggered reactions. Each its own spec.
