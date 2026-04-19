@@ -55,10 +55,18 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
     uint32_t scleraY,  // First pixel Y offset into sclera image
     uint32_t uT,       // Upper eyelid threshold value
     uint32_t lT) {     // Lower eyelid threshold value
-  display_startWrite();
+  // Cold phase: CASET / PASET / RAMWR on handle-L.
+  // Arduino_TFT::setAddrWindow already brackets itself with its own
+  // startWrite()/endWrite() (acquire_bus/release_bus on handle-L). Do NOT
+  // wrap it in another display_startWrite()/display_endWrite() -- that
+  // nests acquire_bus and, more importantly, ends with a spurious second
+  // release_bus that corrupts the bus-lock state so the following
+  // handle-A acquire cannot hand off cleanly to the panel. (v2a had this
+  // same wrap but is_shared_interface=false made begin/endWrite no-ops,
+  // so it was harmless there.)
   display_setAddrWindow(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
-  display_endWrite();
 
+  // Hot phase: pixel stream on handle-A.
   display_pixelsBegin();
 
   const uint32_t scleraXsave = scleraX;
