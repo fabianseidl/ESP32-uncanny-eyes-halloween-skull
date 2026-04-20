@@ -13,7 +13,7 @@
 
 #define EYE_SIDE_LEFT  0
 #define EYE_SIDE_RIGHT 1
-#define EYE_SIDE       EYE_SIDE_LEFT
+#define EYE_SIDE       EYE_SIDE_RIGHT
 
 #define PANEL_WIDTH   466
 #define PANEL_HEIGHT  466
