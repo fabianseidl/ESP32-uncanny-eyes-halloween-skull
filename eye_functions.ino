@@ -1,7 +1,7 @@
 // Scanline-streaming renderer for the Uncanny Eyes.
 // Reads baked eye graphics (sclera / iris / upper / lower) from PROGMEM,
-// computes per-pixel values, and pushes them through display_writePixels()
-// in 1024-pixel chunks. Single-eye, single-display variant.
+// computes per-pixel values, and pushes them through display_async in
+// QSPI_ASYNC_CHUNK_PX-sized chunks. Single-eye, single-display variant.
 //
 // Originally written by Phil Burgess / Paint Your Dragon for Adafruit
 // Industries (MIT license). Adapted to this project's single-eye Waveshare
@@ -15,16 +15,21 @@ uint16_t oldIris = (IRIS_MIN + IRIS_MAX) / 2, newIris;
 extern uint16_t line_src[];
 extern uint16_t line_dst[];
 
+#include "display_async.h"
+
+// Renderer-side accumulator. Each emitted row is appended; when it reaches
+// QSPI_ASYNC_CHUNK_PX we hand the slice off to display_pixelsQueueChunk.
+// Replaces v2a's pbuffer[2][BUFFER_SIZE] ping-pong (the async module owns
+// its own DMA ping-pong internally).
+static uint16_t s_chunk_buf[QSPI_ASYNC_CHUNK_PX];
+static uint32_t s_chunk_fill = 0;
+
 static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
                        int32_t irisY, uint32_t iScale,
                        uint32_t uT, uint32_t lT);
 static void expandRow(const uint16_t* src, uint16_t* dst);
 static void emitRow(const uint16_t* dst);
 static void emitRowFlushTail();
-
-// Shared with emitRowFlushTail; promoted to file scope so the frame-end
-// tail flush can drain the partial DMA buffer.
-static uint32_t s_emitPixels = 0;
 
 // Initialise eye ----------------------------------------------------------
 void initEyes(void) {
@@ -46,8 +51,19 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
     uint32_t scleraY,  // First pixel Y offset into sclera image
     uint32_t uT,       // Upper eyelid threshold value
     uint32_t lT) {     // Lower eyelid threshold value
-  display_startWrite();
+  // Cold phase: CASET / PASET / RAMWR on handle-L.
+  // Arduino_TFT::setAddrWindow already brackets itself with its own
+  // startWrite()/endWrite() (acquire_bus/release_bus on handle-L). Do NOT
+  // wrap it in another display_startWrite()/display_endWrite() -- that
+  // nests acquire_bus and, more importantly, ends with a spurious second
+  // release_bus that corrupts the bus-lock state so the following
+  // handle-A acquire cannot hand off cleanly to the panel. (v2a had this
+  // same wrap but is_shared_interface=false made begin/endWrite no-ops,
+  // so it was harmless there.)
   display_setAddrWindow(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
+
+  // Hot phase: pixel stream on handle-A.
+  display_pixelsBegin();
 
   const uint32_t scleraXsave = scleraX;
   int32_t        irisY       = (int32_t)scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
@@ -69,7 +85,7 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
   }
 
   emitRowFlushTail();
-  display_endWrite();
+  display_pixelsEnd();
 }
 
 // v1's inner scanline, verbatim, with the pixel-write target changed from
@@ -140,28 +156,26 @@ static void expandRow(const uint16_t* src, uint16_t* dst) {
   }
 }
 
-// Push one expanded row through the DMA ping-pong. Flushes whenever the
-// active buffer fills. Callers must wrap their sequence of emitRow() calls
-// in display_startWrite() / display_endWrite(), and must invoke a final
-// flush via emitRowFlushTail() before endWrite.
+// Append one expanded row to the chunk accumulator; when it fills, hand off
+// to display_pixelsQueueChunk. Call drawEye() with display_pixelsBegin /
+// display_pixelsEnd bracketing the emitRow sequence; call emitRowFlushTail
+// after the last emitRow before display_pixelsEnd.
 static void emitRow(const uint16_t* dst) {
   for (uint32_t i = 0; i < RENDER_WIDTH; i++) {
-    pbuffer[dmaBuf][s_emitPixels++] = dst[i];
-    if (s_emitPixels >= BUFFER_SIZE) {
-      yield();
-      display_writePixels(&pbuffer[dmaBuf][0], s_emitPixels);
-      dmaBuf = !dmaBuf;
-      s_emitPixels = 0;
+    s_chunk_buf[s_chunk_fill++] = dst[i];
+    if (s_chunk_fill == QSPI_ASYNC_CHUNK_PX) {
+      display_pixelsQueueChunk(s_chunk_buf, s_chunk_fill);
+      s_chunk_fill = 0;
     }
   }
 }
 
-// Flush the partial DMA buffer at end of frame. Must be called between the
-// last emitRow() and display_endWrite().
+// Flush the partial chunk accumulator at end of frame. Must be called between
+// the last emitRow() and display_pixelsEnd().
 static void emitRowFlushTail() {
-  if (s_emitPixels) {
-    display_writePixels(&pbuffer[dmaBuf][0], s_emitPixels);
-    s_emitPixels = 0;
+  if (s_chunk_fill) {
+    display_pixelsQueueChunk(s_chunk_buf, s_chunk_fill);
+    s_chunk_fill = 0;
   }
 }
 
