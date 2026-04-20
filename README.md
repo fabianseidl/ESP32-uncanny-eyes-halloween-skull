@@ -89,6 +89,26 @@ Edit `config.h`:
 
 This controls two things: the eyelid-map mirror direction (so the caruncle ends up on the nose side), and a small ±4 px X-offset so a pair of boards looks convergently fixated.
 
+## Eye gallery (compile-time)
+
+Switch styles by editing **`data/eye_asset.h`**: keep **exactly one** active `#include` and comment the rest. Rebuild and reflash — only one eye’s tables are linked per binary (no duplicate symbols).
+
+| Active include | Notes |
+|----------------|--------|
+| `data/default_large.h` | **Default.** 240²-baked hazel; sharpest on the 466 panel. |
+| `data/defaultEye.h` | Classic 128² human hazel. |
+| `data/dragonEye.h` | Slit pupil / demon. |
+| `data/noScleraEye.h` | Large iris, minimal sclera. |
+| `data/goatEye.h` | Horizontal pupil. |
+| `data/newtEye.h` | “Eye of newt”. |
+| `data/terminatorEye.h` | Red robot eye. |
+| `data/catEye.h` | Cartoon cat. |
+| `data/owlEye.h` | Owl — Adafruit recommends **disabling** `#define TRACKING` in `config.h` for this asset (comment out that line, then restore for other eyes). |
+| `data/naugaEye.h` | Googly eye. |
+| `data/doeEye.h` | Cartoon deer. |
+
+128² assets are nearest-neighbour upscaled to 466² by the v2a row expander; expect softer detail than `default_large.h`. Runtime switching (touch) is planned as a later phase — see `docs/superpowers/specs/2026-04-20-adafruit-eye-gallery-design.md`.
+
 ## Repository layout
 
 ```
@@ -97,7 +117,8 @@ config.h                                 Per-board config (EYE_SIDE, geometry, f
 display.ino                              Thin Arduino_GFX wrapper for CO5300 QSPI
 display_async.cpp / display_async.h      DMA QSPI pixel stream (second SPI device)
 eye_functions.ino                        Scanline-streaming renderer + animation
-data/default_large.h                     Baked 240x240 eye graphics (sclera/iris/lids)
+data/default_large.h                   Default 240² eye assets (sclera / iris / lids / polar)
+data/*.h, data/eye_asset.h             Compile-time eye gallery (see *Eye gallery* above)
 
 tools/hello_amoled/                      Standalone RGB smoke test for the panel
 docs/hardware-notes.md                   Waveshare pin map + init notes
