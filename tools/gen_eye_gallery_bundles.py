@@ -13,14 +13,17 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # (slug for C identifiers, path relative to ROOT)
 #
-# Flash: all classic + default_large exceeds the default 1.3MB app partition.
-# Default build keeps a **small** subset so `arduino-cli compile` succeeds.
-# To pack more styles: use PartitionScheme=huge_app, or trim this list, or
-# follow the phase-2 plan Option B (LittleFS).
+# Flash: `default_large.h` (~2.5MB source) does not fit the default app partition.
+# Empirically on FQBN …PartitionScheme=default: **six** 128² classics ≈94% of
+# 1310720 B; a seventh overflows. Edit this list (smaller eyes first) or use
+# PartitionScheme=huge_app / LittleFS for more styles or default_large.
 SPECS: list[tuple[str, str]] = [
     ("nauga", "data/naugaEye.h"),
     ("owl", "data/owlEye.h"),
     ("cat", "data/catEye.h"),
+    ("goat", "data/goatEye.h"),
+    ("terminator", "data/terminatorEye.h"),
+    ("newt", "data/newtEye.h"),
 ]
 
 INT_DEFINES = [
