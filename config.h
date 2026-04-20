@@ -9,7 +9,7 @@
 // chunk, continuation otherwise) assumes the library's per-chunk framing.
 #define QSPI_ASYNC_CHUNK_PX 1024
 
-#include "data/default_large.h"
+#include "data/eye_asset.h"
 
 #define EYE_SIDE_LEFT  0
 #define EYE_SIDE_RIGHT 1
