@@ -32,6 +32,8 @@ void setup() {
   display_fillScreen(0x0000);
   display_setBrightness(DISPLAY_BRIGHTNESS);
 
+  eye_gallery_touch_begin();
+
   startTime = millis();
   Serial.println("uncanny-eyes: running");
 }

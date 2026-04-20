@@ -1,6 +1,6 @@
 # Adafruit eye gallery — compile-time first, touch cycling later
 
-**Status:** phase 1 implemented  
+**Status:** phase 1 implemented; phase 2 (runtime serial + touch) implemented on `feat/adafruit-eye-gallery-phase2`  
 **Date:** 2026-04-20  
 **Depends on:** v2a row-expand renderer (source `SCREEN_*` → panel `RENDER_*` via NN stretch).  
 **Out of scope here:** native-466 asset regeneration, two-board sync, OTA.
@@ -11,7 +11,7 @@ Bring the full set of Adafruit Uncanny Eyes styles onto the Waveshare 466×466 A
 
 1. **Phase 1 — compile-time gallery:** Ship multiple `data/*.h` asset packs (PROGMEM, flat tables). Select exactly one eye per firmware build via a single `#include` in `config.h` (or a thin `eye_asset.h` wrapper). Rebuild and reflash to try the next style. No runtime switching, no duplicate symbols.
 
-2. **Phase 2 — touch cycling (future spec):** One firmware cycles through styles on touch (or serial command). Requires either prefixed table names + active pointer table, or LittleFS-loaded blobs — **not** part of phase 1.
+2. **Phase 2 — runtime gallery:** One firmware cycles through multiple styles on **CST9217 tap** (short press / release) or **serial** (`n` / newline). Implemented as **Option A:** prefixed PROGMEM tables + `EyeRuntime` active pointer (`tools/gen_eye_gallery_bundles.py`, SensorLib touch). Default partition ships **six** 128² classics (~94% flash); more styles need `huge_app` or LittleFS (Option B — not implemented).
 
 ## Goals (phase 1)
 
@@ -45,10 +45,10 @@ Verify each header defines the usual macros: `SCREEN_WIDTH` / `SCREEN_HEIGHT`, `
 - [x] Each style fills the 466 panel per v2a when selected (unchanged renderer; `SCREEN_*` ≤ `RENDER_*`).
 - [x] No async QSPI / renderer code changes for this feature; flash usage drops when using smaller 128² assets vs `default_large` (expected).
 
-## Phase 2 (pointer only — full spec later)
+## Phase 2 (implemented — summary)
 
-- Touch (or GPIO / serial) increments style index.
-- Implementation options: **(A)** multiple renamed `const` arrays in one link + pointers set at init; **(B)** LittleFS binary packs + load into PSRAM. Choose in a dedicated spec after phase 1 is stable.
+- Touch (CST9217) and **serial** increment the active style index; see [`README.md`](../../../README.md) and [`../plans/2026-04-20-adafruit-eye-gallery-phase2.md`](../plans/2026-04-20-adafruit-eye-gallery-phase2.md).
+- **(A)** Renamed `const` tables + `EyeRuntime` — shipped. **(B)** LittleFS — only if flash budget requires it.
 
 ## References
 
