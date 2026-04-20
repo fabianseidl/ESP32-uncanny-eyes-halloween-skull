@@ -9,7 +9,7 @@
 // chunk, continuation otherwise) assumes the library's per-chunk framing.
 #define QSPI_ASYNC_CHUNK_PX 1024
 
-#include "data/eye_asset.h"
+#include "generated/eye_gallery_limits.h"
 
 #define EYE_SIDE_LEFT  0
 #define EYE_SIDE_RIGHT 1
@@ -25,9 +25,9 @@
 // Upscale-only guard. The Bresenham expander is correct under downscale
 // too, but shipping a misconfigured downscale build is almost certainly
 // unintentional -- lock it out.
-static_assert(SCREEN_WIDTH  <= RENDER_WIDTH,
+static_assert(EYE_GALLERY_MAX_SCREEN_W <= RENDER_WIDTH,
               "v2a assumes source asset width <= render/panel width");
-static_assert(SCREEN_HEIGHT <= RENDER_HEIGHT,
+static_assert(EYE_GALLERY_MAX_SCREEN_H <= RENDER_HEIGHT,
               "v2a assumes source asset height <= render/panel height");
 
 #define DISPLAY_BRIGHTNESS 200
