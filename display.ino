@@ -60,20 +60,6 @@ void display_fillScreen(uint16_t color) {
   if (s_gfx) s_gfx->fillScreen(color);
 }
 
-void display_startWrite() {
-  if (s_gfx) s_gfx->startWrite();
-}
-
-void display_endWrite() {
-  if (s_gfx) s_gfx->endWrite();
-}
-
 void display_setAddrWindow(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (s_gfx) s_gfx->setAddrWindow(x, y, w, h);
-}
-
-// Push `len` RGB565 pixels. The renderer already byte-swaps each pixel
-// into big-endian form before calling, so writePixels goes out as-is.
-void display_writePixels(uint16_t *data, uint32_t len) {
-  if (s_gfx) s_gfx->writePixels(data, len);
 }

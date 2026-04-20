@@ -1,7 +1,7 @@
 // Scanline-streaming renderer for the Uncanny Eyes.
 // Reads baked eye graphics (sclera / iris / upper / lower) from PROGMEM,
-// computes per-pixel values, and pushes them through display_writePixels()
-// in 1024-pixel chunks. Single-eye, single-display variant.
+// computes per-pixel values, and pushes them through display_async in
+// QSPI_ASYNC_CHUNK_PX-sized chunks. Single-eye, single-display variant.
 //
 // Originally written by Phil Burgess / Paint Your Dragon for Adafruit
 // Industries (MIT license). Adapted to this project's single-eye Waveshare
@@ -30,10 +30,6 @@ static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
 static void expandRow(const uint16_t* src, uint16_t* dst);
 static void emitRow(const uint16_t* dst);
 static void emitRowFlushTail();
-
-// Shared with emitRowFlushTail; promoted to file scope so the frame-end
-// tail flush can drain the partial DMA buffer.
-static uint32_t s_emitPixels = 0;
 
 // Initialise eye ----------------------------------------------------------
 void initEyes(void) {
@@ -160,10 +156,10 @@ static void expandRow(const uint16_t* src, uint16_t* dst) {
   }
 }
 
-// Push one expanded row through the DMA ping-pong. Flushes whenever the
-// active buffer fills. Callers must wrap their sequence of emitRow() calls
-// in display_startWrite() / display_endWrite(), and must invoke a final
-// flush via emitRowFlushTail() before endWrite.
+// Append one expanded row to the chunk accumulator; when it fills, hand off
+// to display_pixelsQueueChunk. Call drawEye() with display_pixelsBegin /
+// display_pixelsEnd bracketing the emitRow sequence; call emitRowFlushTail
+// after the last emitRow before display_pixelsEnd.
 static void emitRow(const uint16_t* dst) {
   for (uint32_t i = 0; i < RENDER_WIDTH; i++) {
     s_chunk_buf[s_chunk_fill++] = dst[i];

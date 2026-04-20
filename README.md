@@ -6,12 +6,22 @@ Inspired by [Adafruit's Uncanny Eyes](https://github.com/adafruit/Uncanny_Eyes/)
 
 This repository previously targeted two 1.28" GC9A01 TFTs driven by an ESP32-WROOM-32D plus a servo-driven skull jaw. That hardware path has been removed. See the git history up to commit [`4dedaa3`](https://github.com/) if you need the old code.
 
-## v2a scope
+## Scope (v2a renderer + v2b async QSPI)
 
 - Renders **one eye** (left or right, selected at compile time) full-panel 466×466 on the AMOLED, NN-stretched from the 240-baked asset via a row expander. Per-pixel iris / sclera / eyelid logic still runs at source resolution (57.6K ops/frame); horizontal + vertical nearest-neighbour duplication happens at render resolution.
 - Autonomous eye motion, autoblink, eyelid tracking, autonomous iris scaling — all preserved from the original.
 - No touch, no IMU, no RTC, no PMU control, no audio. Those peripherals exist on the board but are not used yet.
-- v1 baseline (native 240×240, centered, no DMA queueing) measured **~32 FPS** on the Waveshare 1.75 at 40 MHz QSPI. v2a FPS is recorded per-build after hardware verification — see the design spec for the current measurement.
+- **v2b:** Pixels leave the MCU through a **second `spi_device_handle_t`** on `SPI2_HOST` (DMA queue + ping-pong buffers in `display_async.cpp`), while `Arduino_CO5300` / `Arduino_ESP32QSPI` keep the cold path (`setAddrWindow`, init, `fillScreen`, brightness). The library bus is opened for sharing (`is_shared_interface=true`). See `docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md`.
+- **Measured FPS (same board, `default_large.h`, serial `FPS=`):** v2a baseline **~10 FPS** (QSPI-bound, synchronous `writePixels`). v2b **~17 FPS** after bring-up — a clear gain, still **below** the v2b spec stretch floor of 20 FPS; further CPU/DMA tuning is explicitly deferred (see *Ideas for later*).
+
+### v2b hardware verification (merge checklist)
+
+| Item | Expected |
+|------|-----------|
+| `arduino-cli compile` (FQBN below) | clean |
+| Serial after `display_begin()` | `qspi_async: init ok` |
+| Panel | full-panel eye, motion/blink/iris as v2a |
+| Serial `FPS=` | ~17 on current build (re-measure after changes) |
 
 ## Hardware
 
@@ -57,10 +67,13 @@ Expected serial output at 115200:
 uncanny-eyes: boot
 initEyes: single eye v1
 uncanny-eyes: display_begin()
+qspi_async: init ok
 uncanny-eyes: running
-FPS=32
+FPS=17
 ...
 ```
+
+(`FPS=` varies with firmware; v2b full-panel builds have measured in the high teens on the reference board.)
 
 The eye fills the full 466×466 AMOLED (the panel's own round mask trims the corners).
 
@@ -80,22 +93,23 @@ This controls two things: the eyelid-map mirror direction (so the caruncle ends 
 
 ```
 ESP32-uncanny-eyes-halloween-skull.ino   Arduino entry point (setup/loop)
-config.h                                 v1 per-board config (EYE_SIDE, geometry, flags)
+config.h                                 Per-board config (EYE_SIDE, geometry, flags)
 display.ino                              Thin Arduino_GFX wrapper for CO5300 QSPI
+display_async.cpp / display_async.h      DMA QSPI pixel stream (second SPI device)
 eye_functions.ino                        Scanline-streaming renderer + animation
 data/default_large.h                     Baked 240x240 eye graphics (sclera/iris/lids)
 
 tools/hello_amoled/                      Standalone RGB smoke test for the panel
 docs/hardware-notes.md                   Waveshare pin map + init notes
-docs/superpowers/specs/                  v1 design doc
-docs/superpowers/plans/                  v1 implementation plan
+docs/superpowers/specs/                  Design specs (v2a row-expand, v2b async QSPI, …)
+docs/superpowers/plans/                  Implementation plans
 ```
 
-Only `display.ino` knows about `Arduino_GFX`; the renderer talks to it through a tiny C function API (`display_begin`, `display_setAddrWindow`, `display_writePixels`, …). Swapping to a different display library or board should only touch `display.ino` + `config.h`.
+Only `display.ino` pulls in `Arduino_GFX`. The renderer uses `display_*` helpers in `display.ino` for the cold path and the C API in `display_async.h` (`display_pixelsBegin`, `display_pixelsQueueChunk`, `display_pixelsEnd`) for the hot pixel stream. Swapping displays still centers on `display.ino` + `display_async.*` + `config.h`.
 
 ## Known limitations / ideas for later
 
 - **One eye only.** Two boards would need sync (e.g. ESP-NOW exchanging a shared RNG seed) so both eyes look at the same thing.
 - **Nearest-neighbour upscale.** v2a fills the panel via integer-Bresenham NN duplication from the 240-baked asset; the scale factor (~1.94×) means obvious row/column repeats. A bilinear expander or a native-466 asset would look sharper. See `docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md` "Future Work".
-- **No DMA in the wrapper.** `display.writePixels()` is synchronous. Queued / double-buffered DMA through `Arduino_ESP32QSPI`'s async API would likely push FPS past 50.
+- **v2b FPS headroom (~17 vs ≥20 spec floor, 30 stretch).** Deferred optimizations (no commitment in this merge): `esp_timer` phase profiling to find the dominant cost; fold RGB565 byte-swap into `expandRow` to drop a pass; trim per-chunk `memset` of `spi_transaction_ext_t`; optional `#ifdef` toggles for `TRACKING` / `IRIS_SMOOTH` cost experiments; dirty-rect / smaller address windows per `docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md` "Future work".
 - **TCA9554 expander, AXP2101 PMU, CST9217 touch, QMI8658 IMU, PCF85063 RTC** — all present on the board, all unused. See `docs/hardware-notes.md` for pins / I²C addresses when you want to light them up.
