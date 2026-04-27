@@ -13,3 +13,6 @@ void eye_gallery_poll(void);
 
 /** CST9217 on the Waveshare AMOLED — call after `display_begin()` (Wire up). */
 void eye_gallery_touch_begin(void);
+
+/** Poll touch between animation frames (`split` can block `loop()` for a long time). */
+void eye_gallery_poll_touch_during_render(void);

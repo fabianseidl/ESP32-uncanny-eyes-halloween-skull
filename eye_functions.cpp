@@ -190,6 +190,10 @@ uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 #endif
 
 static void frame(uint16_t iScale) {
+  // `split()` can call `frame()` many times before `loop()` returns — touch
+  // must be polled here, not only from `loop()`, or events are missed.
+  eye_gallery_poll_touch_during_render();
+
   static uint32_t frames = 0;
   int16_t         eyeX, eyeY;
   uint32_t        t = micros();

@@ -1,15 +1,17 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+#include "config.h"
 #include "eye_gallery.h"
 
-// Lewis He SensorLib — same CST9217 path as Waveshare 06_LVGL_Widgets.ino.
+// Lewis He SensorLib — CST9217 touch driver.
 // https://github.com/lewisxhe/SensorLib  (`arduino-cli lib install SensorLib`)
-#if __has_include("touch/TouchDrvCST92xx.h")
+// EYE_GALLERY_HAS_TOUCH is set in config.h (default 1). arduino-cli resolves
+// library paths from plain #include lines; __has_include() is invisible to its
+// scanner and was causing SensorLib/src to never be added to the build path.
+#if EYE_GALLERY_HAS_TOUCH
+#include <TouchDrv.hpp>
 #include "touch/TouchDrvCST92xx.h"
-#define EYE_GALLERY_HAS_TOUCH 1
-#else
-#define EYE_GALLERY_HAS_TOUCH 0
 #endif
 
 // Waveshare ESP32-S3-Touch-AMOLED-1.75 — docs/hardware-notes.md
@@ -19,13 +21,72 @@
 #define EYE_GALLERY_I2C_SCL  14
 #define EYE_GALLERY_TOUCH_ADDR 0x5A
 
+#ifndef EYE_GALLERY_TOUCH_LOG
+#define EYE_GALLERY_TOUCH_LOG 0
+#endif
+
 static size_t s_gallery_idx = 0;
 
 #if EYE_GALLERY_HAS_TOUCH
 static TouchDrvCST92xx s_touch;
-static bool            s_touch_ok      = false;
-static bool            s_touch_pressed = false;
+static bool            s_touch_ok = false;
+static bool            s_touch_down = false;
 static uint32_t        s_touch_last_advance_ms = 0;
+
+static void touch_poll_once(void) {
+  if (!s_touch_ok) {
+    return;
+  }
+
+  // CST9217 uses interrupt-driven reads: INT goes LOW when data is ready.
+  // Calling getTouchPoints() without checking isPressed() first reads stale
+  // registers and the buffer[6] ACK marker is absent → always returns empty.
+  const bool pressed = s_touch.isPressed();
+  if (!pressed) {
+    s_touch_down = false;
+    return;
+  }
+
+  const uint32_t       now = millis();
+  const TouchPoints&   tp  = s_touch.getTouchPoints();
+  const uint8_t        n   = tp.getPointCount();
+  const bool           has = (n > 0);
+
+#if EYE_GALLERY_TOUCH_LOG
+  static bool s_prev_has = false;
+  if (has != s_prev_has) {
+    s_prev_has = has;
+    Serial.print("eye_gallery: touch ");
+    Serial.print(has ? "DOWN" : "UP");
+    Serial.print(" points=");
+    Serial.print(n);
+    Serial.print(" TP_INT=");
+    Serial.println(digitalRead(EYE_GALLERY_TP_INT));
+    if (has && n > 0) {
+      const TouchPoint& p = tp.getPoint(0);
+      Serial.print("eye_gallery:   first x=");
+      Serial.print(p.x);
+      Serial.print(" y=");
+      Serial.println(p.y);
+    }
+  }
+#endif
+
+  if (has) {
+    if (!s_touch_down) {
+      s_touch_down = true;
+      if (now - s_touch_last_advance_ms > 450) {
+        eye_gallery_next();
+        s_touch_last_advance_ms = now;
+#if EYE_GALLERY_TOUCH_LOG
+        Serial.println("eye_gallery: touch -> style advance");
+#endif
+      }
+    }
+  } else {
+    s_touch_down = false;
+  }
+}
 #endif
 
 void eye_gallery_init(void) {
@@ -61,10 +122,19 @@ void eye_gallery_touch_begin(void) {
     Serial.println("eye_gallery: touch begin failed (serial n still works)");
     return;
   }
+  // INT is active-low; weak pull-up helps a stable idle level when idle.
+  pinMode(EYE_GALLERY_TP_INT, INPUT_PULLUP);
+
   s_touch.setMaxCoordinates(466, 466);
   s_touch.setMirrorXY(true, true);
   Serial.print("eye_gallery: touch ok ");
   Serial.println(s_touch.getModelName());
+#endif
+}
+
+void eye_gallery_poll_touch_during_render(void) {
+#if EYE_GALLERY_HAS_TOUCH
+  touch_poll_once();
 #endif
 }
 
@@ -77,19 +147,6 @@ void eye_gallery_poll(void) {
   }
 
 #if EYE_GALLERY_HAS_TOUCH
-  if (!s_touch_ok) {
-    return;
-  }
-  const bool   has = s_touch.getTouchPoints().hasPoints();
-  const uint32_t now = millis();
-  if (has) {
-    s_touch_pressed = true;
-  } else if (s_touch_pressed) {
-    s_touch_pressed = false;
-    if (now - s_touch_last_advance_ms > 400) {
-      eye_gallery_next();
-      s_touch_last_advance_ms = now;
-    }
-  }
+  touch_poll_once();
 #endif
 }

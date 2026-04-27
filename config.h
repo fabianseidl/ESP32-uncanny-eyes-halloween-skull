@@ -32,6 +32,13 @@ static_assert(EYE_GALLERY_MAX_SCREEN_H <= RENDER_HEIGHT,
 
 #define DISPLAY_BRIGHTNESS 200
 
+// CST9217 touch support. Requires SensorLib (arduino-cli lib install SensorLib).
+// Set to 0 to build without touch (serial 'n' still cycles the gallery).
+#define EYE_GALLERY_HAS_TOUCH 1
+
+// Serial diagnostics for CST9217 (down/up, coordinates). Comment out to silence.
+#define EYE_GALLERY_TOUCH_LOG 1
+
 #define TRACKING
 #define AUTOBLINK
 #define IRIS_SMOOTH
