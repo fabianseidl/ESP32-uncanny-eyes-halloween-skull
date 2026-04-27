@@ -15,9 +15,7 @@
 #include <esp_err.h>
 #include <string.h>
 
-// config.h drags in data/default_large.h which uses PROGMEM, so it must
-// come AFTER <Arduino.h>. (Task 1 doesn't actually need config.h symbols
-// yet, but Task 2 will pull QSPI_ASYNC_CHUNK_PX from here.)
+// config.h pulls generated limits + sketch defines; include after <Arduino.h>.
 #include "config.h"
 
 // Pin map duplicated from display.ino -- kept local here so this file is

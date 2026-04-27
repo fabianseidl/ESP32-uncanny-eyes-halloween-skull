@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Emit generated/eye_gallery_limits.h and eye_gallery_bundles.cpp (sketch root).
+
+Run from repo root:  python3 tools/gen_eye_gallery_bundles.py
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# (slug for C identifiers, path relative to ROOT)
+#
+# Flash: `default_large.h` (~2.5MB source) does not fit the default app partition.
+# Empirically on FQBN …PartitionScheme=default: **six** 128² classics ≈94% of
+# 1310720 B; a seventh overflows. Edit this list (smaller eyes first) or use
+# PartitionScheme=huge_app / LittleFS for more styles or default_large.
+SPECS: list[tuple[str, str]] = [
+    ("nauga", "data/naugaEye.h"),
+    ("owl", "data/owlEye.h"),
+    ("cat", "data/catEye.h"),
+    ("goat", "data/goatEye.h"),
+    ("terminator", "data/terminatorEye.h"),
+    ("newt", "data/newtEye.h"),
+]
+
+INT_DEFINES = [
+    "SCREEN_WIDTH",
+    "SCREEN_HEIGHT",
+    "SCLERA_WIDTH",
+    "SCLERA_HEIGHT",
+    "IRIS_WIDTH",
+    "IRIS_HEIGHT",
+    "IRIS_MAP_WIDTH",
+    "IRIS_MAP_HEIGHT",
+]
+
+
+def parse_int_defines(text: str) -> dict[str, int]:
+    defs: dict[str, int] = {}
+    for name in INT_DEFINES:
+        pat = re.compile(rf"^#define\s+{re.escape(name)}\s+(\d+)", re.MULTILINE)
+        ms = list(pat.finditer(text))
+        if ms:
+            defs[name] = int(ms[-1].group(1))
+    for name in ("IRIS_MIN", "IRIS_MAX"):
+        pat = re.compile(rf"^#define\s+{re.escape(name)}\s+(\d+)", re.MULTILINE)
+        ms = list(pat.finditer(text))
+        if ms:
+            defs[name] = int(ms[-1].group(1))
+    return defs
+
+
+def strip_symmetrical_eyelid_keep_else(text: str) -> str:
+    """Sketch builds without SYMMETRICAL_EYELID; keep only #else branch."""
+    key = "#ifdef SYMMETRICAL_EYELID"
+    out: list[str] = []
+    pos = 0
+    while True:
+        i = text.find(key, pos)
+        if i < 0:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:i])
+        e = text.find("#else", i)
+        if e < 0:
+            raise ValueError("SYMMETRICAL_EYELID block missing #else")
+        fi = text.find("#endif // SYMMETRICAL_EYELID", e)
+        if fi < 0:
+            fi = text.find("#endif", e)
+            if fi < 0:
+                raise ValueError("SYMMETRICAL_EYELID block missing #endif")
+        line_end = text.find("\n", fi)
+        if line_end < 0:
+            line_end = len(text)
+        else:
+            line_end += 1
+        # body: after #else line through before #endif
+        else_start = text.find("\n", e)
+        if else_start < 0:
+            else_start = e + len("#else")
+        else:
+            else_start += 1
+        middle = text[else_start:fi]
+        out.append(middle)
+        pos = line_end
+    return "".join(out)
+
+
+def strip_define_lines(text: str, names: list[str]) -> str:
+    for name in names:
+        text = re.sub(rf"^#define\s+{re.escape(name)}\b.*\n", "", text, flags=re.MULTILINE)
+    return text
+
+
+def expand_macro_brackets(text: str, d: dict[str, int]) -> str:
+    sw, sh = d["SCREEN_WIDTH"], d["SCREEN_HEIGHT"]
+    sclw, sclh = d["SCLERA_WIDTH"], d["SCLERA_HEIGHT"]
+    imw, imh = d["IRIS_MAP_WIDTH"], d["IRIS_MAP_HEIGHT"]
+    text = text.replace(
+        "[SCLERA_HEIGHT * SCLERA_WIDTH]", f"[{sclh * sclw}]"
+    )
+    text = text.replace(
+        "[IRIS_MAP_HEIGHT * IRIS_MAP_WIDTH]", f"[{imh * imw}]"
+    )
+    text = text.replace(
+        "[SCREEN_HEIGHT * SCREEN_WIDTH]", f"[{sh * sw}]"
+    )
+    return text
+
+
+def rename_tables(text: str, slug: str) -> str:
+    pre = f"eye_{slug}_"
+    text = text.replace("const uint16_t sclera[", f"const uint16_t {pre}sclera[")
+    text = text.replace("const uint16_t iris[", f"const uint16_t {pre}iris[")
+    text = text.replace("const uint8_t upper[", f"const uint8_t {pre}upper[")
+    text = text.replace("const uint8_t lower[", f"const uint8_t {pre}lower[")
+    text = text.replace("const uint16_t polar[", f"const uint16_t {pre}polar[")
+    return text
+
+
+def transform_asset(raw: str, slug: str) -> str:
+    t = strip_symmetrical_eyelid_keep_else(raw)
+    d = parse_int_defines(raw)
+    for k in INT_DEFINES:
+        if k not in d:
+            raise ValueError(f"{slug}: missing #define {k}")
+    t = strip_define_lines(t, INT_DEFINES + ["IRIS_MIN", "IRIS_MAX"])
+    t = expand_macro_brackets(t, d)
+    t = rename_tables(t, slug)
+    return t
+
+
+def main() -> int:
+    max_sw = max_sh = 0
+    rows: list[tuple[str, str, dict[str, int]]] = []
+
+    for slug, rel in SPECS:
+        path = ROOT / rel
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        d = parse_int_defines(raw)
+        for k in INT_DEFINES:
+            if k not in d:
+                print(f"error: {slug} missing {k}", file=sys.stderr)
+                return 1
+        max_sw = max(max_sw, d["SCREEN_WIDTH"])
+        max_sh = max(max_sh, d["SCREEN_HEIGHT"])
+        rows.append((slug, rel, d))
+
+    gen_dir = ROOT / "generated"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    limits_h = gen_dir / "eye_gallery_limits.h"
+    limits_h.write_text(
+        f"""#pragma once
+// Generated by tools/gen_eye_gallery_bundles.py — do not edit.
+#include <stdint.h>
+constexpr unsigned EYE_GALLERY_MAX_SCREEN_W = {max_sw};
+constexpr unsigned EYE_GALLERY_MAX_SCREEN_H = {max_sh};
+""",
+        encoding="utf-8",
+    )
+
+    cpp_parts: list[str] = [
+        "// Generated by tools/gen_eye_gallery_bundles.py — do not edit.\n"
+        '#include <Arduino.h>\n'
+        '#include "eye_runtime.h"\n\n'
+    ]
+
+    inits: list[str] = []
+
+    for slug, rel, d in rows:
+        raw = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        body = transform_asset(raw, slug)
+        cpp_parts.append(f"// --- begin {slug} ({rel}) ---\n")
+        cpp_parts.append(body)
+        if not cpp_parts[-1].endswith("\n"):
+            cpp_parts.append("\n")
+        cpp_parts.append(f"// --- end {slug} ---\n\n")
+
+        pre = f"eye_{slug}_"
+        iris_min = d.get("IRIS_MIN", 90)
+        iris_max = d.get("IRIS_MAX", 130)
+        inits.append(
+            f"""  {{
+    .name = "{slug}",
+    .screen_w = {d["SCREEN_WIDTH"]},
+    .screen_h = {d["SCREEN_HEIGHT"]},
+    .sclera_width = {d["SCLERA_WIDTH"]},
+    .sclera_height = {d["SCLERA_HEIGHT"]},
+    .iris_width = {d["IRIS_WIDTH"]},
+    .iris_height = {d["IRIS_HEIGHT"]},
+    .iris_map_width = {d["IRIS_MAP_WIDTH"]},
+    .iris_map_height = {d["IRIS_MAP_HEIGHT"]},
+    .iris_min = {iris_min},
+    .iris_max = {iris_max},
+    .sclera = {pre}sclera,
+    .iris = {pre}iris,
+    .upper = {pre}upper,
+    .lower = {pre}lower,
+    .polar = {pre}polar,
+  }}"""
+        )
+
+    cpp_parts.append(
+        "// `extern const` required at file scope so symbols are visible across TUs\n"
+        "// (plain `const` globals have internal linkage in C++).\n"
+        "extern const EyeRuntime eye_gallery[] = {\n"
+        + ",\n".join(inits)
+        + "\n};\n\n"
+        "extern const unsigned EYE_GALLERY_NUM = "
+        "sizeof(eye_gallery) / sizeof(eye_gallery[0]);\n"
+    )
+
+    out_cpp = ROOT / "eye_gallery_bundles.cpp"
+    out_cpp.write_text("".join(cpp_parts), encoding="utf-8")
+    print(f"Wrote {limits_h.relative_to(ROOT)}  max_screen=({max_sw}x{max_sh})")
+    print(f"Wrote {out_cpp.relative_to(ROOT)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

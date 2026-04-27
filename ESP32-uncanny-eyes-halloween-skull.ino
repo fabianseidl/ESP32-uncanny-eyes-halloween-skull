@@ -6,28 +6,16 @@
 // docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md.
 
 #include "config.h"
+#include "eyes.h"
+#include "eye_gallery.h"
 
 // Row-expand line buffers (see docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md).
 // line_src holds one source row filled by drawEyeRow().
 // line_dst holds the horizontally-expanded row pushed through emitRow().
 // Sized at compile time from the asset header + config.h.
-uint16_t line_src[SCREEN_WIDTH];
+uint16_t line_src[EYE_GALLERY_MAX_SCREEN_W];
 uint16_t line_dst[RENDER_WIDTH];
 
-// Blink state machine shared with eye_functions.ino.
-#define NOBLINK 0
-#define ENBLINK 1
-#define DEBLINK 2
-struct eyeBlink {
-  uint8_t  state;
-  uint32_t duration;
-  uint32_t startTime;
-};
-
-// One eye in v1.
-struct EyeState {
-  eyeBlink blink;
-};
 EyeState eye;
 
 uint32_t startTime;  // For FPS indicator; set in setup().
@@ -44,10 +32,13 @@ void setup() {
   display_fillScreen(0x0000);
   display_setBrightness(DISPLAY_BRIGHTNESS);
 
+  eye_gallery_touch_begin();
+
   startTime = millis();
   Serial.println("uncanny-eyes: running");
 }
 
 void loop() {
+  eye_gallery_poll();
   updateEye();
 }

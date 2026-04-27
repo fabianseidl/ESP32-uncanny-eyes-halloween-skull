@@ -10,7 +10,7 @@ This repository previously targeted two 1.28" GC9A01 TFTs driven by an ESP32-WRO
 
 - Renders **one eye** (left or right, selected at compile time) full-panel 466×466 on the AMOLED, NN-stretched from the 240-baked asset via a row expander. Per-pixel iris / sclera / eyelid logic still runs at source resolution (57.6K ops/frame); horizontal + vertical nearest-neighbour duplication happens at render resolution.
 - Autonomous eye motion, autoblink, eyelid tracking, autonomous iris scaling — all preserved from the original.
-- No touch, no IMU, no RTC, no PMU control, no audio. Those peripherals exist on the board but are not used yet.
+- **Runtime eye gallery:** six 128² styles baked in flash (`tools/gen_eye_gallery_bundles.py` → `eye_gallery_bundles.cpp`); **tap** the panel (CST9217) or send **`n`** / newline on serial to cycle. Requires [SensorLib](https://github.com/lewisxhe/SensorLib) for touch (see prerequisites). No IMU, RTC, PMU, or audio.
 - **v2b:** Pixels leave the MCU through a **second `spi_device_handle_t`** on `SPI2_HOST` (DMA queue + ping-pong buffers in `display_async.cpp`), while `Arduino_CO5300` / `Arduino_ESP32QSPI` keep the cold path (`setAddrWindow`, init, `fillScreen`, brightness). The library bus is opened for sharing (`is_shared_interface=true`). See `docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md`.
 - **Measured FPS (same board, `default_large.h`, serial `FPS=`):** v2a baseline **~10 FPS** (QSPI-bound, synchronous `writePixels`). v2b **~17 FPS** after bring-up — a clear gain, still **below** the v2b spec stretch floor of 20 FPS; further CPU/DMA tuning is explicitly deferred (see *Ideas for later*).
 
@@ -47,6 +47,11 @@ For a full pair of eyes you need two of these boards. Each board is flashed with
   ```bash
   arduino-cli lib install "GFX Library for Arduino"
   ```
+- **SensorLib** (Lewis He) — CST9217 touch for on-panel style cycling. Install once:
+  ```bash
+  arduino-cli lib install "SensorLib"
+  ```
+  If SensorLib is missing, the sketch still compiles; touch is disabled and serial `n` remains.
 
 ## Build and flash
 
@@ -65,9 +70,11 @@ Expected serial output at 115200:
 
 ```
 uncanny-eyes: boot
-initEyes: single eye v1
+initEyes: runtime gallery v1
+eye_gallery: start nauga
 uncanny-eyes: display_begin()
 qspi_async: init ok
+eye_gallery: touch ok CST9217
 uncanny-eyes: running
 FPS=17
 ...
@@ -89,25 +96,27 @@ Edit `config.h`:
 
 This controls two things: the eyelid-map mirror direction (so the caruncle ends up on the nose side), and a small ±4 px X-offset so a pair of boards looks convergently fixated.
 
-## Eye gallery (compile-time)
+## Eye gallery (runtime, default firmware)
 
-Switch styles by editing **`data/eye_asset.h`**: keep **exactly one** active `#include` and comment the rest. Rebuild and reflash — only one eye’s tables are linked per binary (no duplicate symbols).
+The main sketch links **six** 128² styles at once (PROGMEM tables renamed by the generator). Order and membership are **`SPECS`** in `tools/gen_eye_gallery_bundles.py` (default: nauga, owl, cat, goat, terminator, newt). Regenerate after edits:
 
-| Active include | Notes |
-|----------------|--------|
-| `data/default_large.h` | **Default.** 240²-baked hazel; sharpest on the 466 panel. |
-| `data/defaultEye.h` | Classic 128² human hazel. |
-| `data/dragonEye.h` | Slit pupil / demon. |
-| `data/noScleraEye.h` | Large iris, minimal sclera. |
-| `data/goatEye.h` | Horizontal pupil. |
-| `data/newtEye.h` | “Eye of newt”. |
-| `data/terminatorEye.h` | Red robot eye. |
-| `data/catEye.h` | Cartoon cat. |
-| `data/owlEye.h` | Owl — Adafruit recommends **disabling** `#define TRACKING` in `config.h` for this asset (comment out that line, then restore for other eyes). |
-| `data/naugaEye.h` | Googly eye. |
-| `data/doeEye.h` | Cartoon deer. |
+```bash
+python3 tools/gen_eye_gallery_bundles.py
+```
 
-128² assets are nearest-neighbour upscaled to 466² by the v2a row expander; expect softer detail than `default_large.h`. Runtime switching (touch) is planned as a later phase — see `docs/superpowers/specs/2026-04-20-adafruit-eye-gallery-design.md`.
+Then `arduino-cli compile` as usual. On the default app partition, **six** is near the flash ceiling (~94%); a seventh style typically overflows — use a larger app partition or trim `SPECS`.
+
+**Cycle styles:** short **tap** on the glass (release to advance) or serial **`n`**, **`N`**, **CR/LF**. Debounce ~400 ms between touch advances.
+
+**Legacy compile-time gallery:** `data/eye_asset.h` is still useful for one-header experiments, but `config.h` in this branch uses the generated gallery limits + bundles, not `eye_asset.h`. To compare a single raw header build, switch `config.h` back to `#include "data/eye_asset.h"` and drop the gallery `line_src` sizing (see git history / phase 1 plan).
+
+| Style (default runtime set) | File |
+|----------------------------|------|
+| nauga, owl, cat, goat, terminator, newt | `data/*Eye.h` |
+
+**Owl:** with `owl` in the rotation, Adafruit recommends disabling `#define TRACKING` in `config.h` if eyelid tracking looks wrong.
+
+Design: `docs/superpowers/specs/2026-04-20-adafruit-eye-gallery-design.md` — phase 2 (touch + serial) implemented on branch `feat/adafruit-eye-gallery-phase2`.
 
 ## Repository layout
 
@@ -116,11 +125,16 @@ ESP32-uncanny-eyes-halloween-skull.ino   Arduino entry point (setup/loop)
 config.h                                 Per-board config (EYE_SIDE, geometry, flags)
 display.ino                              Thin Arduino_GFX wrapper for CO5300 QSPI
 display_async.cpp / display_async.h      DMA QSPI pixel stream (second SPI device)
-eye_functions.ino                        Scanline-streaming renderer + animation
-data/default_large.h                   Default 240² eye assets (sclera / iris / lids / polar)
-data/*.h, data/eye_asset.h             Compile-time eye gallery (see *Eye gallery* above)
+eye_functions.cpp                        Scanline-streaming renderer + animation
+eyes.h                                   Shared blink state + init/update prototypes
+eye_gallery.cpp / eye_gallery.h          Runtime style index, serial + touch poll
+eye_runtime.h                            Per-style dimensions + PROGMEM pointers
+eye_gallery_bundles.cpp                  Generated PROGMEM tables (run tools/gen_eye_gallery_bundles.py)
+generated/eye_gallery_limits.h           Generated max source width/height
+data/*.h, data/eye_asset.h               Per-eye headers; legacy single-include gallery
 
 tools/hello_amoled/                      Standalone RGB smoke test for the panel
+tools/gen_eye_gallery_bundles.py         Builds eye_gallery_bundles.cpp + limits header
 docs/hardware-notes.md                   Waveshare pin map + init notes
 docs/superpowers/specs/                  Design specs (v2a row-expand, v2b async QSPI, …)
 docs/superpowers/plans/                  Implementation plans
@@ -133,4 +147,4 @@ Only `display.ino` pulls in `Arduino_GFX`. The renderer uses `display_*` helpers
 - **One eye only.** Two boards would need sync (e.g. ESP-NOW exchanging a shared RNG seed) so both eyes look at the same thing.
 - **Nearest-neighbour upscale.** v2a fills the panel via integer-Bresenham NN duplication from the 240-baked asset; the scale factor (~1.94×) means obvious row/column repeats. A bilinear expander or a native-466 asset would look sharper. See `docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md` "Future Work".
 - **v2b FPS headroom (~17 vs ≥20 spec floor, 30 stretch).** Deferred optimizations (no commitment in this merge): `esp_timer` phase profiling to find the dominant cost; fold RGB565 byte-swap into `expandRow` to drop a pass; trim per-chunk `memset` of `spi_transaction_ext_t`; optional `#ifdef` toggles for `TRACKING` / `IRIS_SMOOTH` cost experiments; dirty-rect / smaller address windows per `docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md` "Future work".
-- **TCA9554 expander, AXP2101 PMU, CST9217 touch, QMI8658 IMU, PCF85063 RTC** — all present on the board, all unused. See `docs/hardware-notes.md` for pins / I²C addresses when you want to light them up.
+- **TCA9554 expander, AXP2101 PMU, QMI8658 IMU, PCF85063 RTC** — present on the board, unused in this sketch. **CST9217** is used for gallery tap-to-advance. See `docs/hardware-notes.md` for pins and I²C addresses.

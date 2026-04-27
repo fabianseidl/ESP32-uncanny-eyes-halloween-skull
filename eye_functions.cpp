@@ -6,81 +6,83 @@
 // Originally written by Phil Burgess / Paint Your Dragon for Adafruit
 // Industries (MIT license). Adapted to this project's single-eye Waveshare
 // ESP32-S3 AMOLED target.
+//
+// Built as .cpp (not .ino) so Arduino does not inject prototypes before
+// EyeRuntime is visible.
+
+#include <Arduino.h>
+#include "config.h"
+#include "eyes.h"
+#include "eye_runtime.h"
+#include "eye_gallery.h"
+
+// Active asset (runtime gallery index); set before first render.
+static const EyeRuntime* g_eye = nullptr;
+
+void eye_renderer_set_active(const EyeRuntime* e) {
+  g_eye = e;
+}
 
 // Autonomous iris motion uses a fractal behavior to simulate both the
 // major reaction of the eye plus the continuous smaller adjustments.
-uint16_t oldIris = (IRIS_MIN + IRIS_MAX) / 2, newIris;
+uint16_t oldIris = 110, newIris = 110;
 
 // Row-expand line buffers (defined in ESP32-uncanny-eyes-halloween-skull.ino).
 extern uint16_t line_src[];
 extern uint16_t line_dst[];
 
 #include "display_async.h"
+#include "display_sketch.h"
 
-// Renderer-side accumulator. Each emitted row is appended; when it reaches
-// QSPI_ASYNC_CHUNK_PX we hand the slice off to display_pixelsQueueChunk.
-// Replaces v2a's pbuffer[2][BUFFER_SIZE] ping-pong (the async module owns
-// its own DMA ping-pong internally).
 static uint16_t s_chunk_buf[QSPI_ASYNC_CHUNK_PX];
 static uint32_t s_chunk_fill = 0;
 
 static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
                        int32_t irisY, uint32_t iScale,
                        uint32_t uT, uint32_t lT);
-static void expandRow(const uint16_t* src, uint16_t* dst);
+static void expandRow(const uint16_t* src, uint16_t* dst, uint16_t screen_w);
 static void emitRow(const uint16_t* dst);
 static void emitRowFlushTail();
+static void drawEye(uint32_t iScale, uint32_t scleraX, uint32_t scleraY,
+                    uint32_t uT, uint32_t lT);
+static void frame(uint16_t iScale);
+static void split(int16_t startValue, int16_t endValue, uint32_t startTime_local,
+                  int32_t duration, int16_t range);
 
-// Initialise eye ----------------------------------------------------------
 void initEyes(void) {
-  Serial.println("initEyes: single eye v1");
+  eye_gallery_init();
+  oldIris = (g_eye->iris_min + g_eye->iris_max) / 2;
+  Serial.println("initEyes: runtime gallery v1");
   eye.blink.state = NOBLINK;
 }
 
-// UPDATE EYE --------------------------------------------------------------
 void updateEye(void) {
-  newIris = random(IRIS_MIN, IRIS_MAX);
-  split(oldIris, newIris, micros(), 10000000L, IRIS_MAX - IRIS_MIN);
+  newIris = random((long)g_eye->iris_min, (long)g_eye->iris_max);
+  split(oldIris, newIris, micros(), 10000000L,
+        g_eye->iris_max - g_eye->iris_min);
   oldIris = newIris;
 }
 
-// EYE-RENDERING FUNCTION --------------------------------------------------
-void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
-    uint32_t iScale,   // Scale factor for iris
-    uint32_t scleraX,  // First pixel X offset into sclera image
-    uint32_t scleraY,  // First pixel Y offset into sclera image
-    uint32_t uT,       // Upper eyelid threshold value
-    uint32_t lT) {     // Lower eyelid threshold value
-  // Cold phase: CASET / PASET / RAMWR on handle-L.
-  // Arduino_TFT::setAddrWindow already brackets itself with its own
-  // startWrite()/endWrite() (acquire_bus/release_bus on handle-L). Do NOT
-  // wrap it in another display_startWrite()/display_endWrite() -- that
-  // nests acquire_bus and, more importantly, ends with a spurious second
-  // release_bus that corrupts the bus-lock state so the following
-  // handle-A acquire cannot hand off cleanly to the panel. (v2a had this
-  // same wrap but is_shared_interface=false made begin/endWrite no-ops,
-  // so it was harmless there.)
+static void drawEye(uint32_t iScale, uint32_t scleraX, uint32_t scleraY,
+                    uint32_t uT, uint32_t lT) {
   display_setAddrWindow(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
 
-  // Hot phase: pixel stream on handle-A.
   display_pixelsBegin();
 
   const uint32_t scleraXsave = scleraX;
-  int32_t        irisY       = (int32_t)scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
+  int32_t        irisY       = (int32_t)scleraY -
+                         (g_eye->sclera_height - g_eye->iris_height) / 2;
 
-  // Vertical NN replication via Bresenham: for every source row emitted
-  // once, we emit extra copies based on the accumulated RENDER_HEIGHT -
-  // SCREEN_HEIGHT error. Total emits per frame = RENDER_HEIGHT exactly.
   int32_t vAccum = 0;
-  for (uint32_t sy = 0; sy < SCREEN_HEIGHT; sy++) {
+  for (uint32_t sy = 0; sy < g_eye->screen_h; sy++) {
     drawEyeRow(sy, scleraXsave, scleraY + sy, irisY + (int32_t)sy,
                iScale, uT, lT);
-    expandRow(line_src, line_dst);
-    emitRow(line_dst);                     // always at least once
-    vAccum += (int32_t)RENDER_HEIGHT - (int32_t)SCREEN_HEIGHT;
-    while (vAccum >= (int32_t)SCREEN_HEIGHT) {
-      vAccum -= SCREEN_HEIGHT;
-      emitRow(line_dst);                   // extra emit (no recompute)
+    expandRow(line_src, line_dst, g_eye->screen_w);
+    emitRow(line_dst);
+    vAccum += (int32_t)RENDER_HEIGHT - (int32_t)g_eye->screen_h;
+    while (vAccum >= (int32_t)g_eye->screen_h) {
+      vAccum -= g_eye->screen_h;
+      emitRow(line_dst);
     }
   }
 
@@ -88,50 +90,44 @@ void drawEye( // Renders the eye. Inputs must be pre-clipped & valid.
   display_pixelsEnd();
 }
 
-// v1's inner scanline, verbatim, with the pixel-write target changed from
-// the DMA ping-pong buffer to line_src[sx]. Pure source-space: references
-// only asset-header macros and the gaze-pan state passed in.
-//
-// Perf: per-row base pointers (`lower_row`, `upper_row`, `sclera_row`,
-// `polar_row`) are cached once per call so the inner loop drops a
-// multiply + add per pixel for each asset read. Row-in-range guard for
-// `polar_row` keeps the iris-only base pointer from wrapping when the
-// gaze has panned so far that the iris is fully outside this row.
 static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
                        int32_t irisY, uint32_t iScale,
                        uint32_t uT, uint32_t lT) {
-  // Eyelid map direction depends on which side this board renders.
-  // LEFT eye walks the eyelid map right-to-left (caruncle on the
-  // nose-side); RIGHT eye walks it left-to-right.
-  const uint16_t lidX_start = (EYE_SIDE == EYE_SIDE_LEFT) ? (SCREEN_WIDTH - 1) : 0;
-  const int16_t  lidX_step  = (EYE_SIDE == EYE_SIDE_LEFT) ? -1 : 1;
+  const uint16_t lidX_start =
+      (EYE_SIDE == EYE_SIDE_LEFT) ? (g_eye->screen_w - 1) : 0;
+  const int16_t lidX_step = (EYE_SIDE == EYE_SIDE_LEFT) ? -1 : 1;
 
   uint32_t scleraX = scleraXsave;
-  int32_t  irisX   = (int32_t)scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
-  uint16_t lidX    = lidX_start;
+  int32_t  irisX =
+      (int32_t)scleraXsave - (g_eye->sclera_width - g_eye->iris_width) / 2;
+  uint16_t lidX = lidX_start;
 
-  const uint8_t*  const lower_row  = lower  + sy       * SCREEN_WIDTH;
-  const uint8_t*  const upper_row  = upper  + sy       * SCREEN_WIDTH;
-  const uint16_t* const sclera_row = sclera + scleraY  * SCLERA_WIDTH;
-  const bool             irisYok   = (irisY >= 0) && (irisY < IRIS_HEIGHT);
-  const uint16_t* const polar_row  = irisYok
-                                   ? (polar + irisY * IRIS_WIDTH)
-                                   : nullptr;
+  const uint8_t* const lower_row =
+      g_eye->lower + sy * g_eye->screen_w;
+  const uint8_t* const upper_row =
+      g_eye->upper + sy * g_eye->screen_w;
+  const uint16_t* const sclera_row =
+      g_eye->sclera + scleraY * g_eye->sclera_width;
+  const bool irisYok =
+      (irisY >= 0) && (irisY < g_eye->iris_height);
+  const uint16_t* const polar_row = irisYok
+                                        ? (g_eye->polar + irisY * g_eye->iris_width)
+                                        : nullptr;
 
-  for (uint32_t sx = 0; sx < SCREEN_WIDTH;
+  for (uint32_t sx = 0; sx < g_eye->screen_w;
        sx++, scleraX++, irisX++, lidX += lidX_step) {
     uint32_t p, a, d;
     if ((pgm_read_byte(lower_row + lidX) <= lT) ||
         (pgm_read_byte(upper_row + lidX) <= uT)) {
       p = 0;
-    } else if (!irisYok || (irisX < 0) || (irisX >= IRIS_WIDTH)) {
+    } else if (!irisYok || (irisX < 0) || (irisX >= g_eye->iris_width)) {
       p = pgm_read_word(sclera_row + scleraX);
     } else {
       p = pgm_read_word(polar_row + irisX);
       d = (iScale * (p & 0x7F)) / 128;
-      if (d < IRIS_MAP_HEIGHT) {
-        a = (IRIS_MAP_WIDTH * (p >> 7)) / 512;
-        p = pgm_read_word(iris + d * IRIS_MAP_WIDTH + a);
+      if (d < g_eye->iris_map_height) {
+        a = (g_eye->iris_map_width * (p >> 7)) / 512;
+        p = pgm_read_word(g_eye->iris + d * g_eye->iris_map_width + a);
       } else {
         p = pgm_read_word(sclera_row + scleraX);
       }
@@ -140,15 +136,12 @@ static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
   }
 }
 
-// Horizontal NN stretch src[SCREEN_WIDTH] -> dst[RENDER_WIDTH] via
-// integer Bresenham. Collapses to a pixel-for-pixel copy when
-// SCREEN_WIDTH == RENDER_WIDTH.
-static void expandRow(const uint16_t* src, uint16_t* dst) {
+static void expandRow(const uint16_t* src, uint16_t* dst, uint16_t screen_w) {
   uint16_t sx     = 0;
   int32_t  hAccum = 0;
   for (uint16_t rx = 0; rx < RENDER_WIDTH; rx++) {
     dst[rx] = src[sx];
-    hAccum += SCREEN_WIDTH;
+    hAccum += screen_w;
     while (hAccum >= (int32_t)RENDER_WIDTH) {
       hAccum -= RENDER_WIDTH;
       sx++;
@@ -156,10 +149,6 @@ static void expandRow(const uint16_t* src, uint16_t* dst) {
   }
 }
 
-// Append one expanded row to the chunk accumulator; when it fills, hand off
-// to display_pixelsQueueChunk. Call drawEye() with display_pixelsBegin /
-// display_pixelsEnd bracketing the emitRow sequence; call emitRowFlushTail
-// after the last emitRow before display_pixelsEnd.
 static void emitRow(const uint16_t* dst) {
   for (uint32_t i = 0; i < RENDER_WIDTH; i++) {
     s_chunk_buf[s_chunk_fill++] = dst[i];
@@ -170,8 +159,6 @@ static void emitRow(const uint16_t* dst) {
   }
 }
 
-// Flush the partial chunk accumulator at end of frame. Must be called between
-// the last emitRow() and display_pixelsEnd().
 static void emitRowFlushTail() {
   if (s_chunk_fill) {
     display_pixelsQueueChunk(s_chunk_buf, s_chunk_fill);
@@ -179,9 +166,7 @@ static void emitRowFlushTail() {
   }
 }
 
-// EYE ANIMATION -----------------------------------------------------------
-
-const uint8_t ease[] = { // Ease in/out curve for eye movements 3*t^2-2*t^3
+static const uint8_t ease[] = {
   0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,  1,  2,  2,  2,  3,
   3,  3,  4,  4,  4,  5,  5,  6,  6,  7,  7,  8,  9,  9, 10, 10,
   11, 12, 12, 13, 14, 15, 15, 16, 17, 18, 18, 19, 20, 21, 22, 23,
@@ -204,9 +189,11 @@ const uint8_t ease[] = { // Ease in/out curve for eye movements 3*t^2-2*t^3
 uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 #endif
 
-// Process motion for a single frame. Takes the iris scale value and drives
-// the full animation -> render pipeline.
-void frame(uint16_t iScale) {
+static void frame(uint16_t iScale) {
+  // `split()` can call `frame()` many times before `loop()` returns — touch
+  // must be polled here, not only from `loop()`, or events are missed.
+  eye_gallery_poll_touch_during_render();
+
   static uint32_t frames = 0;
   int16_t         eyeX, eyeY;
   uint32_t        t = micros();
@@ -219,9 +206,6 @@ void frame(uint16_t iScale) {
     }
   }
 
-  // --- Autonomous X/Y eye motion ---
-  // Periodically initiates motion to a new random point, random speed,
-  // holds there for random period until next motion.
   static bool     eyeInMotion      = false;
   static int16_t  eyeOldX = 512, eyeOldY = 512, eyeNewX = 512, eyeNewY = 512;
   static uint32_t eyeMoveStartTime = 0L;
@@ -258,7 +242,6 @@ void frame(uint16_t iScale) {
     }
   }
 
-  // --- Autonomous blinking ---
 #ifdef AUTOBLINK
   if ((t - timeOfLastBlink) >= timeToNextBlink) {
     timeOfLastBlink = t;
@@ -272,39 +255,39 @@ void frame(uint16_t iScale) {
   }
 #endif
 
-  // Advance blink state machine.
   if (eye.blink.state) {
     if ((t - eye.blink.startTime) >= eye.blink.duration) {
       if (++eye.blink.state > DEBLINK) {
         eye.blink.state = NOBLINK;
       } else {
-        eye.blink.duration *= 2;   // DEBLINK is 1/2 ENBLINK speed
+        eye.blink.duration *= 2;
         eye.blink.startTime = t;
       }
     }
   }
 
-  // --- Map to pixel units ---
-  eyeX = map(eyeX, 0, 1023, 0, SCLERA_WIDTH  - SCREEN_WIDTH);
-  eyeY = map(eyeY, 0, 1023, 0, SCLERA_HEIGHT - SCREEN_HEIGHT);
+  eyeX = map(eyeX, 0, 1023, 0, g_eye->sclera_width - g_eye->screen_w);
+  eyeY = map(eyeY, 0, 1023, 0, g_eye->sclera_height - g_eye->screen_h);
 
-  // Slight convergence so a pair of eyes looks fixated. +/- 4 px nudge
-  // based on which side this board drives.
   eyeX += (EYE_SIDE == EYE_SIDE_LEFT) ? -4 : 4;
-  if (eyeX > (SCLERA_WIDTH - SCREEN_WIDTH)) eyeX = SCLERA_WIDTH - SCREEN_WIDTH;
+  if (eyeX > (g_eye->sclera_width - g_eye->screen_w)) {
+    eyeX = g_eye->sclera_width - g_eye->screen_w;
+  }
   if (eyeX < 0) eyeX = 0;
 
-  // --- Eyelid tracking ---
   static uint8_t uThreshold = 128;
   uint8_t        lThreshold, n;
 #ifdef TRACKING
-  int16_t sampleX = SCLERA_WIDTH  / 2 - (eyeX / 2);
-  int16_t sampleY = SCLERA_HEIGHT / 2 - (eyeY + IRIS_HEIGHT / 4);
+  int16_t sampleX = g_eye->sclera_width / 2 - (eyeX / 2);
+  int16_t sampleY =
+      g_eye->sclera_height / 2 - (eyeY + g_eye->iris_height / 4);
   if (sampleY < 0) {
     n = 0;
   } else {
-    n = (pgm_read_byte(upper + sampleY * SCREEN_WIDTH + sampleX) +
-         pgm_read_byte(upper + sampleY * SCREEN_WIDTH + (SCREEN_WIDTH - 1 - sampleX))) / 2;
+    n = (pgm_read_byte(g_eye->upper + sampleY * g_eye->screen_w + sampleX) +
+         pgm_read_byte(g_eye->upper + sampleY * g_eye->screen_w +
+                       (g_eye->screen_w - 1 - sampleX))) /
+        2;
   }
   uThreshold = (uThreshold * 3 + n) / 4;
   lThreshold = 254 - uThreshold;
@@ -312,7 +295,6 @@ void frame(uint16_t iScale) {
   uThreshold = lThreshold = 0;
 #endif
 
-  // Mix threshold with current blink position.
   if (eye.blink.state) {
     uint32_t s = (t - eye.blink.startTime);
     if (s >= eye.blink.duration) {
@@ -330,28 +312,22 @@ void frame(uint16_t iScale) {
   drawEye(iScale, eyeX, eyeY, n, lThreshold);
 }
 
-// AUTONOMOUS IRIS SCALING -------------------------------------------------
-
-void split( // Subdivides motion path into two sub-paths w/ randomization
-    int16_t  startValue,
-    int16_t  endValue,
-    uint32_t startTime_local,
-    int32_t  duration,
-    int16_t  range) {
+static void split(int16_t startValue, int16_t endValue, uint32_t startTime_local,
+                  int32_t duration, int16_t range) {
   if (range >= 8) {
     range    /= 2;
     duration /= 2;
     int16_t  midValue = (startValue + endValue - range) / 2 + random(range);
     uint32_t midTime  = startTime_local + duration;
     split(startValue, midValue, startTime_local, duration, range);
-    split(midValue,   endValue, midTime,         duration, range);
+    split(midValue, endValue, midTime, duration, range);
   } else {
     int32_t dt;
     int16_t v;
     while ((dt = (micros() - startTime_local)) < duration) {
       v = startValue + (((endValue - startValue) * dt) / duration);
-      if (v < IRIS_MIN)      v = IRIS_MIN;
-      else if (v > IRIS_MAX) v = IRIS_MAX;
+      if (v < g_eye->iris_min) v = g_eye->iris_min;
+      else if (v > g_eye->iris_max) v = g_eye->iris_max;
       frame(v);
     }
   }
