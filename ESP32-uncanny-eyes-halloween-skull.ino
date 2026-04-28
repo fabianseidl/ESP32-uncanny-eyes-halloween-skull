@@ -8,6 +8,7 @@
 #include "config.h"
 #include "eyes.h"
 #include "eye_gallery.h"
+#include "eye_sync.h"
 
 // Row-expand line buffers (see docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md).
 // line_src holds one source row filled by drawEyeRow().
@@ -34,11 +35,14 @@ void setup() {
 
   eye_gallery_touch_begin();
 
+  eye_sync_init();
+
   startTime = millis();
   Serial.println("uncanny-eyes: running");
 }
 
 void loop() {
   eye_gallery_poll();
+  eye_sync_tick();
   updateEye();
 }
