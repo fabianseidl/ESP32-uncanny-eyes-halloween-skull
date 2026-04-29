@@ -58,13 +58,17 @@ For a full pair of eyes you need two of these boards. Each board is flashed with
 The sketch folder must match the main `.ino` filename, so always run `arduino-cli` against the repo root `.`, not against an individual file.
 
 ```bash
-FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=default"
+FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PSRAM=opi,PartitionScheme=huge_app"
 PORT=$(arduino-cli board list | awk '/ESP32 Family Device/{print $1; exit}')
 
 arduino-cli compile --fqbn "$FQBN" .
 arduino-cli upload  --fqbn "$FQBN" -p "$PORT" .
 arduino-cli monitor -p "$PORT" -c baudrate=115200
 ```
+
+> **Why `huge_app`?** With pair sync (`EYE_SYNC_ENABLE 1`, default) the WiFi + ESP-NOW stack is linked, and the binary (~1.83 MB) overflows the standard `default` 1.31 MB app partition. `huge_app` provides a ~3 MB app partition and drops the unused OTA slot. Building with `EYE_SYNC_ENABLE 0` (single-eye fallback) fits in either partition scheme — see *Pair sync* below.
+
+For pair-of-boards work, `flash_board1.sh` and `flash_board2.sh` at the repo root compile + upload + monitor the first / second `arduino-cli board list` entry — useful when both boards are plugged in simultaneously.
 
 Expected serial output at 115200:
 
@@ -142,9 +146,36 @@ docs/superpowers/plans/                  Implementation plans
 
 Only `display.ino` pulls in `Arduino_GFX`. The renderer uses `display_*` helpers in `display.ino` for the cold path and the C API in `display_async.h` (`display_pixelsBegin`, `display_pixelsQueueChunk`, `display_pixelsEnd`) for the hot pixel stream. Swapping displays still centers on `display.ino` + `display_async.*` + `config.h`.
 
+## Pair sync (phase C — gallery index over ESP-NOW)
+
+When two boards run this firmware on the same WiFi channel, a tap on either board cycles **both** to the next gallery style. Sync uses ESP-NOW broadcast with a 4-byte magic prefix — no router, no AP, no extra Arduino library.
+
+Configure in `config.h`:
+
+```c
+#define EYE_SYNC_ENABLE   1   // 0 = single-eye fallback (no WiFi linked)
+#define EYE_SYNC_CHANNEL  1   // both boards must agree
+```
+
+Expected serial on each board (with `EYE_SYNC_LOG 1`):
+
+```
+eye_sync: init ok ch=1 mac=AA:BB:CC:DD:EE:FF
+eye_sync: tx idx=0 flag=hb rc=0
+eye_sync: rx idx=0 from=11:22:33:44:55:66 flag=hb
+```
+
+Tap on either board produces `flag=tap` on the sender and an arrow log (`eye_gallery: <- owl`) on the receiver. Asymmetric boot self-heals on the next heartbeat (≤ 2 s).
+
+`eye_sync_tick()` is polled from inside `frame()` (alongside the existing touch poll) — `loop()` alone is too infrequent because `updateEye()` blocks for ~10 s per call, which would balloon RX latency. With the in-frame poll, RX latency is one render frame (~45 ms at ~22 FPS).
+
+Animation sync (eyes looking at the same point, blinking together) is **phase B**, not in this build.
+
+Design: `docs/superpowers/specs/2026-04-28-eye-sync-phase-c-design.md`. Implementation: branch `feat/eye-sync-phase-c`.
+
 ## Known limitations / ideas for later
 
-- **One eye only.** Two boards would need sync (e.g. ESP-NOW exchanging a shared RNG seed) so both eyes look at the same thing.
+- **Animation sync (phase B).** Phase C (this build) keeps both boards on the same gallery style; both still animate independently. Phase B will sync eye motion / blink / iris, likely via a shared RNG seed broadcast on the same ESP-NOW transport.
 - **Nearest-neighbour upscale.** v2a fills the panel via integer-Bresenham NN duplication from the 240-baked asset; the scale factor (~1.94×) means obvious row/column repeats. A bilinear expander or a native-466 asset would look sharper. See `docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md` "Future Work".
 - **v2b FPS headroom (~17 vs ≥20 spec floor, 30 stretch).** Deferred optimizations (no commitment in this merge): `esp_timer` phase profiling to find the dominant cost; fold RGB565 byte-swap into `expandRow` to drop a pass; trim per-chunk `memset` of `spi_transaction_ext_t`; optional `#ifdef` toggles for `TRACKING` / `IRIS_SMOOTH` cost experiments; dirty-rect / smaller address windows per `docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md` "Future work".
 - **TCA9554 expander, AXP2101 PMU, QMI8658 IMU, PCF85063 RTC** — present on the board, unused in this sketch. **CST9217** is used for gallery tap-to-advance. See `docs/hardware-notes.md` for pins and I²C addresses.
