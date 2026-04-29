@@ -103,6 +103,19 @@ void eye_gallery_next(void) {
   Serial.println(eye_gallery[s_gallery_idx].name);
 }
 
+void eye_gallery_apply_remote_index(uint8_t idx) {
+  if (idx >= EYE_GALLERY_NUM) {
+    return;  // ignore garbage from the wire
+  }
+  if ((size_t)idx == s_gallery_idx) {
+    return;  // already in sync
+  }
+  s_gallery_idx = (size_t)idx;
+  eye_renderer_set_active(&eye_gallery[s_gallery_idx]);
+  Serial.print("eye_gallery: <- ");  // arrow distinguishes remote from local "->"
+  Serial.println(eye_gallery[s_gallery_idx].name);
+}
+
 void eye_gallery_touch_begin(void) {
 #if !EYE_GALLERY_HAS_TOUCH
   Serial.println(
