@@ -15,6 +15,7 @@
 #include "eyes.h"
 #include "eye_runtime.h"
 #include "eye_gallery.h"
+#include "eye_sync.h"
 
 // Active asset (runtime gallery index); set before first render.
 static const EyeRuntime* g_eye = nullptr;
@@ -191,8 +192,10 @@ uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 
 static void frame(uint16_t iScale) {
   // `split()` can call `frame()` many times before `loop()` returns — touch
-  // must be polled here, not only from `loop()`, or events are missed.
+  // and sync must be polled here, not only from `loop()`, or events are
+  // missed and RX latency balloons (split runs for up to ~10 s per call).
   eye_gallery_poll_touch_during_render();
+  eye_sync_tick();
 
   static uint32_t frames = 0;
   int16_t         eyeX, eyeY;

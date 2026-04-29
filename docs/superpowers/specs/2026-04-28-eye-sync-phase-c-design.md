@@ -1,8 +1,15 @@
 # Eye Sync — Phase C: Gallery Index Sync over ESP-NOW
 
-**Status:** design, not yet implemented
+**Status:** implemented (branch `feat/eye-sync-phase-c`)
 **Date:** 2026-04-28
 **Scope:** Synchronize the runtime eye gallery index between two `ESP32-uncanny-eyes-halloween-skull` boards (left + right eye) so a tap on either board cycles both to the same style. Animation sync (eye motion, blink, iris) is explicitly Phase B and out of scope here.
+
+## Corrigenda (discovered during implementation)
+
+Two adjustments to the original design were required to make this work in practice. Read these before relying on the spec text below.
+
+1. **`eye_sync_tick()` must also be polled from inside `frame()`, not only from `loop()`.** `updateEye()` calls `split()` recursively for ~10 s per call, blocking `loop()` for that entire window. RX packets queue up but stay undrained, and heartbeats fire late. The fix mirrors the existing touch-poll pattern: `eye_functions.cpp` `frame()` now calls `eye_sync_tick()` right after `eye_gallery_poll_touch_during_render()`. RX latency drops from up to ~10 s to ~1 frame (~45 ms at ~22 FPS); race-guard window math (which depends on prompt drain) becomes meaningful again. The `loop()` call site is retained as the canonical entry point but contributes negligibly under the current animation timing.
+2. **Build requires `PartitionScheme=huge_app`, not `default`.** Linking WiFi + ESP-NOW grows the binary to ~1.83 MB, which overflows the 1.31 MB `default` app partition. `huge_app` provides a ~3 MB app partition and drops the (unused) OTA slot. The single-eye fallback build (`EYE_SYNC_ENABLE 0`, ~1.27 MB) still fits in `default` for users who do not need pair sync.
 
 ## Background and Motivation
 
@@ -200,8 +207,8 @@ Manual checks (the test harness for this project is the physical pair of boards)
 Serial diagnostics (`EYE_SYNC_LOG 1`):
 
 - `eye_sync: init ok ch=1 mac=AA:BB:CC:DD:EE:FF`
-- `eye_sync: tx idx=2 flag=tap` / `flag=hb`
-- `eye_sync: rx idx=2 from=11:22:33:44:55:66 flag=tap apply` / `ignore (in-sync)` / `ignore (race-guard)`
+- `eye_sync: tx idx=2 flag=tap rc=0` / `flag=hb`
+- `eye_sync: rx idx=2 from=11:22:33:44:55:66 flag=tap` (followed by `eye_gallery: <- owl` from the gallery on apply, or `eye_sync:   ignore (race-guard)` when suppressed; in-sync messages drop silently)
 
 ## Acceptance Criteria
 

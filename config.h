@@ -49,3 +49,12 @@ static_assert(EYE_GALLERY_MAX_SCREEN_H <= RENDER_HEIGHT,
 #if !defined(IRIS_MAX)
   #define IRIS_MAX 130
 #endif
+
+// --- Eye sync (phase C) ----------------------------------------------------
+// Set EYE_SYNC_ENABLE to 0 for the single-eye fallback build (no WiFi code).
+// Both boards must share the same channel value.
+#define EYE_SYNC_ENABLE         1
+#define EYE_SYNC_CHANNEL        1     // WiFi channel both boards use
+#define EYE_SYNC_HEARTBEAT_MS   2000  // heartbeat interval per board
+#define EYE_SYNC_RACE_GUARD_MS  500   // ignore inbound for this window after local tap
+#define EYE_SYNC_LOG            1     // 0 = silent; 1 = serial diagnostics
