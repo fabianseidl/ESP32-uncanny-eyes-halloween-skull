@@ -24,6 +24,37 @@ static uint8_t  s_local_index            = 0;
 static uint32_t s_last_local_change_ms   = 0;
 static uint32_t s_last_heartbeat_ms      = 0;
 
+// 4-slot single-producer / single-consumer ring buffer. Producer is the
+// ESP-NOW receive callback (WiFi task context); consumer is eye_sync_tick()
+// on the main loop. uint8_t indices are atomic on Xtensa, so no lock.
+#define EYE_SYNC_RX_QSIZE 4u
+static volatile EyeSyncMsg s_rx_queue[EYE_SYNC_RX_QSIZE];
+static volatile uint8_t    s_rx_head = 0;  // written by callback
+static volatile uint8_t    s_rx_tail = 0;  // written by tick
+
+// MAC of the most recent sender, captured at enqueue time. Indexed by
+// the queue slot. Used only for log output.
+static volatile uint8_t s_rx_mac[EYE_SYNC_RX_QSIZE][6];
+
+static void on_recv_cb(const esp_now_recv_info_t* info,
+                       const uint8_t* data, int len) {
+  if (len != (int)sizeof(EyeSyncMsg)) {
+    return;
+  }
+  uint8_t next = (uint8_t)((s_rx_head + 1u) % EYE_SYNC_RX_QSIZE);
+  if (next == s_rx_tail) {
+    // queue full — drop. We'll resync on the next heartbeat.
+    return;
+  }
+  memcpy((void*)&s_rx_queue[s_rx_head], data, sizeof(EyeSyncMsg));
+  if (info != nullptr) {
+    memcpy((void*)s_rx_mac[s_rx_head], info->src_addr, 6);
+  } else {
+    memset((void*)s_rx_mac[s_rx_head], 0, 6);
+  }
+  s_rx_head = next;
+}
+
 static void send_msg(uint8_t index, uint8_t flags) {
   EyeSyncMsg msg;
   msg.magic[0] = EYE_SYNC_MAGIC0;
@@ -61,6 +92,8 @@ void eye_sync_init(void) {
     return;
   }
 
+  esp_now_register_recv_cb(on_recv_cb);
+
   esp_now_peer_info_t peer;
   memset(&peer, 0, sizeof(peer));
   memcpy(peer.peer_addr, s_broadcast_addr, 6);
@@ -89,7 +122,31 @@ void eye_sync_tick(void) {
   if (!s_inited) {
     return;
   }
-  // RX drain — filled in Task 6.
+  while (s_rx_tail != s_rx_head) {
+    EyeSyncMsg m;
+    uint8_t    mac[6];
+    memcpy(&m,  (const void*)&s_rx_queue[s_rx_tail], sizeof(EyeSyncMsg));
+    memcpy(mac, (const void*)s_rx_mac[s_rx_tail],     6);
+    s_rx_tail = (uint8_t)((s_rx_tail + 1u) % EYE_SYNC_RX_QSIZE);
+
+    // Drop foreign or wrong-type traffic up front.
+    if (m.magic[0] != EYE_SYNC_MAGIC0 || m.magic[1] != EYE_SYNC_MAGIC1 ||
+        m.magic[2] != EYE_SYNC_MAGIC2 || m.magic[3] != EYE_SYNC_MAGIC3) {
+      continue;
+    }
+    if (m.msg_type != EYE_SYNC_TYPE_GALLERY) {
+      continue;  // reserved for phase B
+    }
+
+#if EYE_SYNC_LOG
+    Serial.printf("eye_sync: rx idx=%u from=%02X:%02X:%02X:%02X:%02X:%02X flag=%s\n",
+                  (unsigned)m.index,
+                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                  (m.flags & EYE_SYNC_FLAG_TAP) ? "tap" : "hb");
+#endif
+
+    // Apply logic added in Task 9.
+  }
 
   uint32_t now = millis();
   if ((uint32_t)(now - s_last_heartbeat_ms) >= EYE_SYNC_HEARTBEAT_MS) {
