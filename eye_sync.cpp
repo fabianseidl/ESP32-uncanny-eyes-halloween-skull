@@ -145,7 +145,24 @@ void eye_sync_tick(void) {
                   (m.flags & EYE_SYNC_FLAG_TAP) ? "tap" : "hb");
 #endif
 
-    // Apply logic added in Task 9.
+    // Drop in-sync messages cheaply.
+    if (m.index == s_local_index) {
+      continue;
+    }
+
+    // Race guard: if we just tapped locally, our outbound message is in
+    // flight and the peer's heartbeat may carry the OLD index. Suppress
+    // applying inbound for EYE_SYNC_RACE_GUARD_MS after a local tap.
+    uint32_t since_local = (uint32_t)(millis() - s_last_local_change_ms);
+    if (since_local < EYE_SYNC_RACE_GUARD_MS) {
+#if EYE_SYNC_LOG
+      Serial.println("eye_sync:   ignore (race-guard)");
+#endif
+      continue;
+    }
+
+    eye_gallery_apply_remote_index(m.index);
+    s_local_index = m.index;
   }
 
   uint32_t now = millis();
