@@ -15,6 +15,7 @@
 #include "eyes.h"
 #include "eye_runtime.h"
 #include "eye_gallery.h"
+#include "eye_side.h"
 #include "eye_sync.h"
 
 // Active asset (runtime gallery index); set before first render.
@@ -95,8 +96,8 @@ static void drawEyeRow(uint32_t sy, uint32_t scleraXsave, uint32_t scleraY,
                        int32_t irisY, uint32_t iScale,
                        uint32_t uT, uint32_t lT) {
   const uint16_t lidX_start =
-      (EYE_SIDE == EYE_SIDE_LEFT) ? (g_eye->screen_w - 1) : 0;
-  const int16_t lidX_step = (EYE_SIDE == EYE_SIDE_LEFT) ? -1 : 1;
+      (g_eye_side == EYE_SIDE_LEFT) ? (g_eye->screen_w - 1) : 0;
+  const int16_t lidX_step = (g_eye_side == EYE_SIDE_LEFT) ? -1 : 1;
 
   uint32_t scleraX = scleraXsave;
   int32_t  irisX =
@@ -272,7 +273,7 @@ static void frame(uint16_t iScale) {
   eyeX = map(eyeX, 0, 1023, 0, g_eye->sclera_width - g_eye->screen_w);
   eyeY = map(eyeY, 0, 1023, 0, g_eye->sclera_height - g_eye->screen_h);
 
-  eyeX += (EYE_SIDE == EYE_SIDE_LEFT) ? -4 : 4;
+  eyeX += (g_eye_side == EYE_SIDE_LEFT) ? -4 : 4;
   if (eyeX > (g_eye->sclera_width - g_eye->screen_w)) {
     eyeX = g_eye->sclera_width - g_eye->screen_w;
   }
