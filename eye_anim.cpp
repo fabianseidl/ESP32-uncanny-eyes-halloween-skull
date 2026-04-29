@@ -186,6 +186,10 @@ void eye_anim_on_pulse(uint32_t step) {
   if (step == 0u) {
     return;
   }
+  // Duplicate RX or stale packet: do not underflow (step - last_applied).
+  if (step <= s_last_applied_step) {
+    return;
+  }
 
   const uint32_t max_catch = 512u;
   uint32_t       behind    = step - s_last_applied_step;
