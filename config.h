@@ -1,6 +1,6 @@
 // v2a config for Waveshare ESP32-S3-Touch-AMOLED-1.75 (CO5300 QSPI, 466x466).
-// Per-board settings. Flash one copy of this firmware to each board with the
-// correct EYE_SIDE.
+// Eye side (mirror / convergence) is chosen at boot from STA MAC — same firmware
+// on both boards. See eye_side_init() and EYE_SIDE_MAC_* below.
 
 #pragma once
 
@@ -13,7 +13,12 @@
 
 #define EYE_SIDE_LEFT  0
 #define EYE_SIDE_RIGHT 1
-#define EYE_SIDE       EYE_SIDE_RIGHT
+
+// STA MAC bytes (same order as Serial / WiFi): match → that eye; else fallback.
+#define EYE_SIDE_MAC_LEFT   0x44, 0x1B, 0xF6, 0x86, 0x23, 0x20
+#define EYE_SIDE_MAC_RIGHT  0x44, 0x1B, 0xF6, 0x86, 0x21, 0x80
+#define EYE_SIDE_MAC_FALLBACK EYE_SIDE_RIGHT
+#define EYE_SIDE_MAC_LOG      1  // 1 = one boot line with resolved side + MAC
 
 #define PANEL_WIDTH   466
 #define PANEL_HEIGHT  466
