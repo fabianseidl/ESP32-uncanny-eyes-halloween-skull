@@ -200,7 +200,12 @@ static void drain_one_rx(const EyeSyncRxSlot* slot) {
     memcpy(&m, p, sizeof(m));
 
     uint32_t since_local = (uint32_t)(millis() - s_last_local_change_ms);
-    if (since_local < EYE_SYNC_RACE_GUARD_MS) {
+    // Phase C race guard: after a local tap, ignore peer traffic that might
+    // carry the *previous* gallery index. For ANIM_SEED, a matching
+    // gallery_idx is the leader's epoch for the style we *just* selected on
+    // touch — it must not be dropped (leader only sends once).
+    if (since_local < EYE_SYNC_RACE_GUARD_MS &&
+        m.gallery_idx != s_local_index) {
       return;
     }
     if (g_eye_side == EYE_SIDE_LEFT) {
