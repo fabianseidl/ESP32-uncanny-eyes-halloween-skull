@@ -1,6 +1,6 @@
 # Eye Sync — Phase B: Animation Lockstep (Deterministic + Leader Pulse)
 
-**Status:** approved (brainstorm 2026-04-29; implementation via `writing-plans`, not started in this commit)  
+**Status:** implemented (`feat/eye-sync-phase-b`, 2026-04-29)  
 **Date:** 2026-04-29  
 **Depends on:** Phase C — [`2026-04-28-eye-sync-phase-c-design.md`](2026-04-28-eye-sync-phase-c-design.md) (gallery index over ESP-NOW)
 

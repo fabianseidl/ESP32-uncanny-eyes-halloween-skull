@@ -17,6 +17,7 @@
 #include "eye_gallery.h"
 #include "eye_side.h"
 #include "eye_sync.h"
+#include "eye_anim.h"
 
 // Active asset (runtime gallery index); set before first render.
 static const EyeRuntime* g_eye = nullptr;
@@ -56,6 +57,7 @@ void initEyes(void) {
   oldIris = (g_eye->iris_min + g_eye->iris_max) / 2;
   Serial.println("initEyes: runtime gallery v1");
   eye.blink.state = NOBLINK;
+  eye_anim_init();
 }
 
 void updateEye(void) {
@@ -215,8 +217,16 @@ static void frame(uint16_t iScale) {
   static uint32_t eyeMoveStartTime = 0L;
   static int32_t  eyeMoveDuration  = 0L;
 
+#if EYE_SYNC_ENABLE && EYE_SYNC_ANIM_ENABLE
+  const bool use_sync_motion = eye_anim_use_sync_motion();
+#else
+  const bool use_sync_motion = false;
+#endif
+
   int32_t dt = t - eyeMoveStartTime;
-  if (eyeInMotion) {
+  if (use_sync_motion) {
+    eye_anim_frame_gaze(t, &eyeX, &eyeY);
+  } else if (eyeInMotion) {
     if (dt >= eyeMoveDuration) {
       eyeInMotion      = false;
       eyeMoveDuration  = random(3000000);
@@ -247,15 +257,17 @@ static void frame(uint16_t iScale) {
   }
 
 #ifdef AUTOBLINK
-  if ((t - timeOfLastBlink) >= timeToNextBlink) {
-    timeOfLastBlink = t;
-    uint32_t blinkDuration = random(36000, 72000);
-    if (eye.blink.state == NOBLINK) {
-      eye.blink.state     = ENBLINK;
-      eye.blink.startTime = t;
-      eye.blink.duration  = blinkDuration;
+  if (!use_sync_motion) {
+    if ((t - timeOfLastBlink) >= timeToNextBlink) {
+      timeOfLastBlink = t;
+      uint32_t blinkDuration = random(36000, 72000);
+      if (eye.blink.state == NOBLINK) {
+        eye.blink.state     = ENBLINK;
+        eye.blink.startTime = t;
+        eye.blink.duration  = blinkDuration;
+      }
+      timeToNextBlink = blinkDuration * 3 + random(4000000);
     }
-    timeToNextBlink = blinkDuration * 3 + random(4000000);
   }
 #endif
 
