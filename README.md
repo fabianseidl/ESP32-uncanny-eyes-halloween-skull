@@ -136,6 +136,8 @@ eye_runtime.h                            Per-style dimensions + PROGMEM pointers
 eye_gallery_bundles.cpp                  Generated PROGMEM tables (run tools/gen_eye_gallery_bundles.py)
 generated/eye_gallery_limits.h           Generated max source width/height
 data/*.h, data/eye_asset.h               Per-eye headers; legacy single-include gallery
+eye_sync.cpp / eye_sync.h                Pair-board sync over ESP-NOW (phase C)
+flash_board1.sh, flash_board2.sh         Flash + monitor first / second ESP32 in board list
 
 tools/hello_amoled/                      Standalone RGB smoke test for the panel
 tools/gen_eye_gallery_bundles.py         Builds eye_gallery_bundles.cpp + limits header

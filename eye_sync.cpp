@@ -92,8 +92,6 @@ void eye_sync_init(void) {
     return;
   }
 
-  esp_now_register_recv_cb(on_recv_cb);
-
   esp_now_peer_info_t peer;
   memset(&peer, 0, sizeof(peer));
   memcpy(peer.peer_addr, s_broadcast_addr, 6);
@@ -105,6 +103,12 @@ void eye_sync_init(void) {
 #endif
     return;
   }
+
+  // Register the receive callback only after the peer is added. If we
+  // registered earlier and add_peer failed, the callback would enqueue into
+  // a ring that eye_sync_tick() never drains (s_inited stays false),
+  // eventually filling the queue and silently dropping forever.
+  esp_now_register_recv_cb(on_recv_cb);
 
   s_inited            = true;
   s_local_index       = 0;  // gallery starts at 0; tap broadcasts will update.

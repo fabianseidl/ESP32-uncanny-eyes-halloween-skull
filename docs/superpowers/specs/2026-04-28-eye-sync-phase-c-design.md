@@ -207,8 +207,8 @@ Manual checks (the test harness for this project is the physical pair of boards)
 Serial diagnostics (`EYE_SYNC_LOG 1`):
 
 - `eye_sync: init ok ch=1 mac=AA:BB:CC:DD:EE:FF`
-- `eye_sync: tx idx=2 flag=tap` / `flag=hb`
-- `eye_sync: rx idx=2 from=11:22:33:44:55:66 flag=tap apply` / `ignore (in-sync)` / `ignore (race-guard)`
+- `eye_sync: tx idx=2 flag=tap rc=0` / `flag=hb`
+- `eye_sync: rx idx=2 from=11:22:33:44:55:66 flag=tap` (followed by `eye_gallery: <- owl` from the gallery on apply, or `eye_sync:   ignore (race-guard)` when suppressed; in-sync messages drop silently)
 
 ## Acceptance Criteria
 
