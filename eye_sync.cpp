@@ -24,6 +24,29 @@ static uint8_t  s_local_index            = 0;
 static uint32_t s_last_local_change_ms   = 0;
 static uint32_t s_last_heartbeat_ms      = 0;
 
+static void send_msg(uint8_t index, uint8_t flags) {
+  EyeSyncMsg msg;
+  msg.magic[0] = EYE_SYNC_MAGIC0;
+  msg.magic[1] = EYE_SYNC_MAGIC1;
+  msg.magic[2] = EYE_SYNC_MAGIC2;
+  msg.magic[3] = EYE_SYNC_MAGIC3;
+  msg.msg_type = EYE_SYNC_TYPE_GALLERY;
+  msg.index    = index;
+  msg.flags    = flags;
+  msg.reserved = 0;
+
+  esp_err_t r = esp_now_send(s_broadcast_addr,
+                             (const uint8_t*)&msg, sizeof(msg));
+#if EYE_SYNC_LOG
+  Serial.printf("eye_sync: tx idx=%u flag=%s rc=%d\n",
+                (unsigned)index,
+                (flags & EYE_SYNC_FLAG_TAP) ? "tap" : "hb",
+                (int)r);
+#else
+  (void)r;
+#endif
+}
+
 void eye_sync_init(void) {
   WiFi.mode(WIFI_STA);
   // Channel must be set before esp_now_init() so the radio is parked
@@ -66,12 +89,24 @@ void eye_sync_tick(void) {
   if (!s_inited) {
     return;
   }
-  // RX drain + heartbeat — filled in Tasks 5 and 6.
+  // RX drain — filled in Task 6.
+
+  uint32_t now = millis();
+  if ((uint32_t)(now - s_last_heartbeat_ms) >= EYE_SYNC_HEARTBEAT_MS) {
+    send_msg(s_local_index, /*flags=*/0);
+    s_last_heartbeat_ms = now;
+  }
 }
 
 void eye_sync_broadcast_index(uint8_t idx) {
-  (void)idx;
-  // Filled in Task 5.
+  if (!s_inited) {
+    return;
+  }
+  uint32_t now            = millis();
+  s_local_index           = idx;
+  s_last_local_change_ms  = now;
+  s_last_heartbeat_ms     = now;  // suppress immediate redundant heartbeat
+  send_msg(idx, EYE_SYNC_FLAG_TAP);
 }
 
 #else  // EYE_SYNC_ENABLE == 0 — fallback no-ops, no WiFi code linked.
