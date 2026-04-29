@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "eye_gallery.h"
+#include "eye_sync.h"
 
 // Lewis He SensorLib — CST9217 touch driver.
 // https://github.com/lewisxhe/SensorLib  (`arduino-cli lib install SensorLib`)
@@ -101,6 +102,9 @@ void eye_gallery_next(void) {
   eye_renderer_set_active(&eye_gallery[s_gallery_idx]);
   Serial.print("eye_gallery: -> ");
   Serial.println(eye_gallery[s_gallery_idx].name);
+#if EYE_SYNC_ENABLE
+  eye_sync_broadcast_index((uint8_t)s_gallery_idx);
+#endif
 }
 
 void eye_gallery_apply_remote_index(uint8_t idx) {
