@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Guidance for AI coding agents (Cursor, Claude Code, Codex, etc.) working in this repo.
+Guidance for AI coding agents (Cursor, Claude Code, Codex, Gemini, etc.) working in this repo.
+
+- **Gemini CLI:** See [GEMINI.md](./GEMINI.md) for Gemini-specific instructions.
 
 ## Always implement on a feature branch, not on `main`
 
