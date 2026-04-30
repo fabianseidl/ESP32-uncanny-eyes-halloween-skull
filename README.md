@@ -136,7 +136,8 @@ eye_runtime.h                            Per-style dimensions + PROGMEM pointers
 eye_gallery_bundles.cpp                  Generated PROGMEM tables (run tools/gen_eye_gallery_bundles.py)
 generated/eye_gallery_limits.h           Generated max source width/height
 data/*.h, data/eye_asset.h               Per-eye headers; legacy single-include gallery
-eye_sync.cpp / eye_sync.h                Pair-board sync over ESP-NOW (phase C)
+eye_sync.cpp / eye_sync.h                Pair-board sync (phase C gallery + phase B motion)
+eye_anim.cpp / eye_anim.h                 Phase B: pulse-locked gaze + autoblink PRNG
 flash_board1.sh, flash_board2.sh         Flash + monitor first / second ESP32 in board list
 
 tools/hello_amoled/                      Standalone RGB smoke test for the panel
@@ -148,15 +149,21 @@ docs/superpowers/plans/                  Implementation plans
 
 Only `display.ino` pulls in `Arduino_GFX`. The renderer uses `display_*` helpers in `display.ino` for the cold path and the C API in `display_async.h` (`display_pixelsBegin`, `display_pixelsQueueChunk`, `display_pixelsEnd`) for the hot pixel stream. Swapping displays still centers on `display.ino` + `display_async.*` + `config.h`.
 
-## Pair sync (phase C — gallery index over ESP-NOW)
+## Pair sync (ESP-NOW — phase C gallery + phase B animation)
 
-When two boards run this firmware on the same WiFi channel, a tap on either board cycles **both** to the next gallery style. Sync uses ESP-NOW broadcast with a 4-byte magic prefix — no router, no AP, no extra Arduino library.
+When two boards run this firmware on the same WiFi channel, a tap on either board cycles **both** to the next gallery style (**phase C**). With **`EYE_SYNC_ANIM_ENABLE` 1** (default when `EYE_SYNC_ENABLE` 1), the **left-eye** board (STA MAC matches `EYE_SIDE_MAC_LEFT`) also broadcasts a shared animation seed and ~10 Hz `ANIM_PULSE` steps so gaze and autoblink stay correlated (**phase B**). The right eye follows pulse messages; if no pulses arrive for `EYE_SYNC_ANIM_FALLBACK_MS`, it falls back to the legacy local `random()` motion until the link recovers.
+
+Transport: ESP-NOW broadcast, `EYE0` magic — no router or extra Arduino libraries.
 
 Configure in `config.h`:
 
 ```c
-#define EYE_SYNC_ENABLE   1   // 0 = single-eye fallback (no WiFi linked)
-#define EYE_SYNC_CHANNEL  1   // both boards must agree
+#define EYE_SYNC_ENABLE          1   // 0 = single-eye fallback (no WiFi linked)
+#define EYE_SYNC_CHANNEL         1   // both boards must agree
+#define EYE_SYNC_ANIM_ENABLE     1   // 0 = phase C only (independent motion per board)
+#define EYE_SYNC_ANIM_PULSE_MS   100 // leader pulse period (~10 Hz)
+#define EYE_SYNC_ANIM_FALLBACK_MS 4000
+#define EYE_SYNC_ANIM_LOG        0   // 1 = anim seed/pulse serial lines
 ```
 
 Expected serial on each board (with `EYE_SYNC_LOG 1`):
@@ -171,13 +178,10 @@ Tap on either board produces `flag=tap` on the sender and an arrow log (`eye_gal
 
 `eye_sync_tick()` is polled from inside `frame()` (alongside the existing touch poll) — `loop()` alone is too infrequent because `updateEye()` blocks for ~10 s per call, which would balloon RX latency. With the in-frame poll, RX latency is one render frame (~45 ms at ~22 FPS).
 
-Animation sync (eyes looking at the same point, blinking together) is **phase B**, not in this build.
-
-Design: `docs/superpowers/specs/2026-04-28-eye-sync-phase-c-design.md`. Implementation: branch `feat/eye-sync-phase-c`.
+Design: phase C `docs/superpowers/specs/2026-04-28-eye-sync-phase-c-design.md`, phase B `docs/superpowers/specs/2026-04-29-eye-sync-phase-b-design.md`. Plan: `docs/superpowers/plans/2026-04-29-eye-sync-phase-b.md`.
 
 ## Known limitations / ideas for later
 
-- **Animation sync (phase B).** Phase C (this build) keeps both boards on the same gallery style; both still animate independently. Phase B will sync eye motion / blink / iris, likely via a shared RNG seed broadcast on the same ESP-NOW transport.
 - **Nearest-neighbour upscale.** v2a fills the panel via integer-Bresenham NN duplication from the 240-baked asset; the scale factor (~1.94×) means obvious row/column repeats. A bilinear expander or a native-466 asset would look sharper. See `docs/superpowers/specs/2026-04-18-v2a-row-expand-design.md` "Future Work".
 - **v2b FPS headroom (~17 vs ≥20 spec floor, 30 stretch).** Deferred optimizations (no commitment in this merge): `esp_timer` phase profiling to find the dominant cost; fold RGB565 byte-swap into `expandRow` to drop a pass; trim per-chunk `memset` of `spi_transaction_ext_t`; optional `#ifdef` toggles for `TRACKING` / `IRIS_SMOOTH` cost experiments; dirty-rect / smaller address windows per `docs/superpowers/specs/2026-04-19-v2b-async-qspi-design.md` "Future work".
 - **TCA9554 expander, AXP2101 PMU, QMI8658 IMU, PCF85063 RTC** — present on the board, unused in this sketch. **CST9217** is used for gallery tap-to-advance. See `docs/hardware-notes.md` for pins and I²C addresses.

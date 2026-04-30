@@ -15,7 +15,11 @@
 #define EYE_SYNC_MAGIC2  'E'
 #define EYE_SYNC_MAGIC3  '0'
 
-#define EYE_SYNC_TYPE_GALLERY  1u
+#define EYE_SYNC_TYPE_GALLERY   1u
+#define EYE_SYNC_TYPE_ANIM_SEED  2u
+#define EYE_SYNC_TYPE_ANIM_PULSE 3u
+
+#define EYE_SYNC_WIRE_MAX        12u
 
 #define EYE_SYNC_FLAG_TAP      0x01u  // bit 0: tap-triggered (else heartbeat)
 
@@ -27,6 +31,25 @@ struct __attribute__((packed)) EyeSyncMsg {
   uint8_t reserved;   // pad to 8 bytes; reserved for phase B sequence number
 };
 static_assert(sizeof(EyeSyncMsg) == 8, "EyeSyncMsg wire format must be 8 bytes");
+
+struct __attribute__((packed)) EyeSyncMsgAnimSeed {
+  uint8_t  magic[4];
+  uint8_t  msg_type;   // EYE_SYNC_TYPE_ANIM_SEED
+  uint8_t  gallery_idx;
+  uint8_t  flags;
+  uint8_t  reserved;
+  uint32_t anim_seed;  // LE
+};
+static_assert(sizeof(EyeSyncMsgAnimSeed) == 12, "EyeSyncMsgAnimSeed");
+
+struct __attribute__((packed)) EyeSyncMsgAnimPulse {
+  uint8_t  magic[4];
+  uint8_t  msg_type;   // EYE_SYNC_TYPE_ANIM_PULSE
+  uint8_t  gallery_idx;
+  uint32_t step;       // LE, wire bytes 6–9
+  uint16_t reserved;   // LE, send 0
+};
+static_assert(sizeof(EyeSyncMsgAnimPulse) == 12, "EyeSyncMsgAnimPulse");
 
 // --- Public API ------------------------------------------------------------
 // All functions are no-ops when EYE_SYNC_ENABLE == 0.

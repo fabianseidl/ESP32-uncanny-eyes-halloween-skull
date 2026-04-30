@@ -63,3 +63,18 @@ static_assert(EYE_GALLERY_MAX_SCREEN_H <= RENDER_HEIGHT,
 #define EYE_SYNC_HEARTBEAT_MS   2000  // heartbeat interval per board
 #define EYE_SYNC_RACE_GUARD_MS  500   // ignore inbound for this window after local tap
 #define EYE_SYNC_LOG            1     // 0 = silent; 1 = serial diagnostics
+
+// --- Eye sync phase B (animation lockstep) --------------------------------
+// Requires EYE_SYNC_ENABLE 1. When 0, no anim PRNG / pulse path is compiled.
+#if !defined(EYE_SYNC_ANIM_ENABLE)
+#define EYE_SYNC_ANIM_ENABLE  1
+#endif
+#if !defined(EYE_SYNC_ANIM_PULSE_MS)
+#define EYE_SYNC_ANIM_PULSE_MS  100
+#endif
+#if !defined(EYE_SYNC_ANIM_FALLBACK_MS)
+#define EYE_SYNC_ANIM_FALLBACK_MS  4000
+#endif
+#if !defined(EYE_SYNC_ANIM_LOG)
+#define EYE_SYNC_ANIM_LOG  0
+#endif
