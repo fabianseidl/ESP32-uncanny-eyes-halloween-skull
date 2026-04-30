@@ -43,6 +43,9 @@ static int32_t span_umod(uint32_t* w, int32_t lo, int32_t hi) {
 }
 
 // --- Gaze FSM (pulse-driven randomness) ------------------------------------
+// All state transitions happen in pulse_fsm_one(); frame_gaze() is pure
+// interpolation. Motion duration is counted in pulses so both boards transition
+// state on the same pulse step regardless of clock skew or RX latency.
 static bool     s_eye_in_motion      = false;
 static int16_t  s_eye_old_x = 512;
 static int16_t  s_eye_old_y = 512;
@@ -52,6 +55,8 @@ static uint32_t s_eye_move_start_us = 0;
 static int32_t  s_eye_move_duration_us = 0;
 static int32_t  s_idle_pulses_left   = 0;
 static bool     s_need_idle_pick     = true;
+static int32_t  s_motion_pulses_total = 0;
+static uint32_t s_motion_start_step   = 0;
 
 static uint32_t s_last_applied_step  = 0;
 static uint32_t s_last_pulse_seen_ms = 0;
@@ -71,6 +76,8 @@ void eye_anim_init(void) {
   s_eye_move_duration_us = 0;
   s_idle_pulses_left   = 0;
   s_need_idle_pick     = true;
+  s_motion_pulses_total = 0;
+  s_motion_start_step   = 0;
   s_last_applied_step  = 0;
   s_last_pulse_seen_ms = millis();
   s_epoch_wall_ms      = millis();
@@ -93,6 +100,8 @@ void eye_anim_reset_epoch(uint32_t anim_seed) {
   s_eye_move_duration_us  = 0;
   s_idle_pulses_left      = 0;
   s_need_idle_pick        = true;
+  s_motion_pulses_total   = 0;
+  s_motion_start_step     = 0;
   s_last_applied_step  = 0;
   s_last_pulse_seen_ms = millis();
   s_epoch_wall_ms      = millis();
@@ -126,6 +135,17 @@ bool eye_anim_use_sync_motion(void) {
 static void pulse_fsm_one(void) {
   uint32_t w = anim_lcg_step();
 
+  // Motion-end transition is pulse-counted (deterministic on both boards),
+  // never wall-time. frame_gaze() never mutates FSM state.
+  if (s_eye_in_motion &&
+      (s_last_applied_step - s_motion_start_step) >=
+          (uint32_t)s_motion_pulses_total) {
+    s_eye_in_motion  = false;
+    s_eye_old_x      = s_eye_new_x;
+    s_eye_old_y      = s_eye_new_y;
+    s_need_idle_pick = true;
+  }
+
   if (s_need_idle_pick) {
     s_idle_pulses_left =
         span_umod(&w, 15, 36);  // ~1.5–3.5 s at 100 ms pulse
@@ -154,8 +174,12 @@ static void pulse_fsm_one(void) {
 
       s_eye_new_x             = nx;
       s_eye_new_y             = ny;
-      s_eye_move_duration_us  =
-          span_umod(&w, 72000, 144001);  // [72000,144000]
+      // Duration in pulses (1–2 at 100 ms) so motion always ends on a pulse
+      // boundary on both boards. micros() value is for interpolation only.
+      s_motion_pulses_total   = span_umod(&w, 1, 3);
+      s_motion_start_step     = s_last_applied_step;
+      s_eye_move_duration_us  = (int32_t)s_motion_pulses_total *
+                                (int32_t)EYE_SYNC_ANIM_PULSE_MS * 1000;
       s_eye_move_start_us     = micros();
       s_eye_in_motion         = true;
     }
@@ -225,22 +249,19 @@ void eye_anim_frame_gaze(uint32_t t, int16_t* out_x, int16_t* out_y) {
   int32_t dt = (int32_t)(t - s_eye_move_start_us);
   int16_t eyeX, eyeY;
 
-  if (s_eye_in_motion) {
-    if (dt >= s_eye_move_duration_us) {
-      s_eye_in_motion      = false;
-      s_eye_old_x          = s_eye_new_x;
-      s_eye_old_y          = s_eye_new_y;
-      s_eye_move_start_us  = t;
-      s_need_idle_pick     = true;
-      eyeX                 = s_eye_old_x;
-      eyeY                 = s_eye_old_y;
-    } else {
-      int16_t eased = (int16_t)(k_ease[(uint32_t)(255 * dt / s_eye_move_duration_us)] + 1);
-      eyeX = (int16_t)(s_eye_old_x +
-                       (((int32_t)(s_eye_new_x - s_eye_old_x) * eased) / 256));
-      eyeY = (int16_t)(s_eye_old_y +
-                       (((int32_t)(s_eye_new_y - s_eye_old_y) * eased) / 256));
-    }
+  if (s_eye_in_motion && s_eye_move_duration_us > 0 &&
+      dt < s_eye_move_duration_us) {
+    if (dt < 0) dt = 0;
+    int16_t eased = (int16_t)(k_ease[(uint32_t)(255 * dt / s_eye_move_duration_us)] + 1);
+    eyeX = (int16_t)(s_eye_old_x +
+                     (((int32_t)(s_eye_new_x - s_eye_old_x) * eased) / 256));
+    eyeY = (int16_t)(s_eye_old_y +
+                     (((int32_t)(s_eye_new_y - s_eye_old_y) * eased) / 256));
+  } else if (s_eye_in_motion) {
+    // Past local duration but pulse-driven motion-end hasn't fired yet:
+    // hold at the new target until pulse_fsm_one() flips state.
+    eyeX = s_eye_new_x;
+    eyeY = s_eye_new_y;
   } else {
     eyeX = s_eye_old_x;
     eyeY = s_eye_old_y;
