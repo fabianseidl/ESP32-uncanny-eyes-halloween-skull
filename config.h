@@ -42,7 +42,7 @@ static_assert(EYE_GALLERY_MAX_SCREEN_H <= RENDER_HEIGHT,
 #define EYE_GALLERY_HAS_TOUCH 1
 
 // Serial diagnostics for CST9217 (down/up, coordinates). Comment out to silence.
-#define EYE_GALLERY_TOUCH_LOG 1
+#define EYE_GALLERY_TOUCH_LOG 0
 
 #define TRACKING
 #define AUTOBLINK
@@ -62,7 +62,7 @@ static_assert(EYE_GALLERY_MAX_SCREEN_H <= RENDER_HEIGHT,
 #define EYE_SYNC_CHANNEL        1     // WiFi channel both boards use
 #define EYE_SYNC_HEARTBEAT_MS   2000  // heartbeat interval per board
 #define EYE_SYNC_RACE_GUARD_MS  500   // ignore inbound for this window after local tap
-#define EYE_SYNC_LOG            1     // 0 = silent; 1 = serial diagnostics
+#define EYE_SYNC_LOG            0     // 0 = silent; 1 = serial diagnostics
 
 // --- Eye sync phase B (animation lockstep) --------------------------------
 // Requires EYE_SYNC_ENABLE 1. When 0, no anim PRNG / pulse path is compiled.

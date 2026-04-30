@@ -243,7 +243,22 @@ static void drain_one_rx(const EyeSyncRxSlot* slot) {
     return;
   }
 #endif  // EYE_SYNC_ANIM_ENABLE
+
+  if (msg_type == EYE_SYNC_TYPE_BRIGHTNESS) {
+    if (len != (int)sizeof(EyeSyncMsg)) {
+      return;
+    }
+    EyeSyncMsg m;
+    memcpy(&m, p, sizeof(m));
+#if EYE_SYNC_LOG
+    Serial.printf("eye_sync: rx brightness=%u from=%02X:%02X:...\n",
+                  (unsigned)m.index, mac[0], mac[1]);
+#endif
+    eye_gallery_apply_remote_brightness(m.index);
+    return;
+  }
 }
+
 
 void eye_sync_init(void) {
   WiFi.mode(WIFI_STA);
@@ -335,10 +350,24 @@ void eye_sync_broadcast_index(uint8_t idx) {
 #endif
 }
 
+void eye_sync_broadcast_brightness(uint8_t brightness) {
+  if (!s_inited) {
+    return;
+  }
+  EyeSyncMsg msg;
+  fill_magic(msg.magic);
+  msg.msg_type = EYE_SYNC_TYPE_BRIGHTNESS;
+  msg.index    = brightness;
+  msg.flags    = 0;
+  msg.reserved = 0;
+  (void)esp_now_send(s_broadcast_addr, (const uint8_t*)&msg, sizeof(msg));
+}
+
 #else  // EYE_SYNC_ENABLE == 0 — fallback no-ops, no WiFi code linked.
 
 void eye_sync_init(void)                    {}
 void eye_sync_tick(void)                    {}
 void eye_sync_broadcast_index(uint8_t idx)  { (void)idx; }
+void eye_sync_broadcast_brightness(uint8_t b) { (void)b; }
 
 #endif

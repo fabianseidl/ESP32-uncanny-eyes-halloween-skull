@@ -18,6 +18,7 @@
 #define EYE_SYNC_TYPE_GALLERY   1u
 #define EYE_SYNC_TYPE_ANIM_SEED  2u
 #define EYE_SYNC_TYPE_ANIM_PULSE 3u
+#define EYE_SYNC_TYPE_BRIGHTNESS 4u
 
 #define EYE_SYNC_WIRE_MAX        12u
 
@@ -70,6 +71,10 @@ void eye_sync_tick(void);
  *  eye_gallery_next() after a LOCAL advance (touch or serial). Sets the
  *  EYE_SYNC_FLAG_TAP flag and resets the race-guard timer. */
 void eye_sync_broadcast_index(uint8_t idx);
+
+/** Broadcast a display brightness change. Call from the touch swipe
+ *  handler when adjusting brightness locally. */
+void eye_sync_broadcast_brightness(uint8_t brightness);
 
 #ifdef __cplusplus
 }

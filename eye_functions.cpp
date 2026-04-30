@@ -79,6 +79,7 @@ static void drawEye(uint32_t iScale, uint32_t scleraX, uint32_t scleraY,
 
   int32_t vAccum = 0;
   for (uint32_t sy = 0; sy < g_eye->screen_h; sy++) {
+    eye_gallery_check_fast_touch();
     drawEyeRow(sy, scleraXsave, scleraY + sy, irisY + (int32_t)sy,
                iScale, uT, lT);
     expandRow(line_src, line_dst, g_eye->screen_w);
